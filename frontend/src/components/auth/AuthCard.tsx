@@ -2,11 +2,11 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
 
-export function AuthCard({ mode }: { mode: 'login' | 'signup' }) {
-  const router = useRouter();
+export function AuthCard({ mode, configError }: { mode: 'login' | 'signup'; configError?: string }) {
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
@@ -14,13 +14,41 @@ export function AuthCard({ mode }: { mode: 'login' | 'signup' }) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
-    setTimeout(() => { setIsLoading(false); router.push('/app'); }, 1200);
+    setError('Email/password auth is disabled. Please continue with Google.');
   };
 
-  const handleOAuth = () => {
+  const handleOAuth = async () => {
+    if (configError) {
+      setError(configError);
+      return;
+    }
+
     setIsLoading(true);
-    setTimeout(() => { setIsLoading(false); router.push('/app'); }, 1000);
+    setError(null);
+
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+          scopes: 'https://www.googleapis.com/auth/gmail.send',
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'consent',
+          },
+        },
+      });
+
+      if (error) {
+        console.error('Auth error:', error);
+        setError(error.message);
+        setIsLoading(false);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to initialize Supabase client');
+      setIsLoading(false);
+    }
   };
 
   const labelClass = 'text-[12px] font-semibold text-[#1A1210] mb-1.5 block';
@@ -41,7 +69,7 @@ export function AuthCard({ mode }: { mode: 'login' | 'signup' }) {
       <button
         type="button"
         onClick={handleOAuth}
-        disabled={isLoading}
+        disabled={isLoading || Boolean(configError)}
         className="w-full h-11 flex items-center justify-center gap-2 bg-white border border-[#EBE0DC] rounded-lg text-[14px] font-medium text-[#1A1210] hover:bg-[#FDF8F6] hover:border-[#D94048] transition-all disabled:opacity-50"
       >
         <svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -97,9 +125,17 @@ export function AuthCard({ mode }: { mode: 'login' | 'signup' }) {
           disabled={isLoading}
           className="w-full h-11 bg-[#D94048] text-white font-semibold text-[15px] rounded-lg hover:bg-[#C13540] transition-colors disabled:opacity-60 mt-1"
         >
-          {isLoading ? 'Please wait...' : isLogin ? 'Sign in' : 'Create account'}
+          {isLogin ? 'Sign in with email (disabled)' : 'Create account with email (disabled)'}
         </button>
       </form>
+
+      {error && (
+        <p className="mt-3 text-[12px] text-[#D94048]">{error}</p>
+      )}
+
+      {configError && !error && (
+        <p className="mt-3 text-[12px] text-[#D94048]">{configError}</p>
+      )}
 
       {/* Toggle link */}
       <p className="text-center mt-5 text-[13px] text-[#5C4A46]">

@@ -6,7 +6,7 @@ import Grainient from '@/components/Grainient';
 
 export function HeroSection() {
   return (
-    <section className="relative min-h-[100svh] flex items-center pt-16 overflow-hidden">
+    <section className="relative w-full min-h-[100svh] flex flex-col justify-center pt-[64px] overflow-hidden">
       {/* Grainient background */}
       <div className="absolute inset-0 w-full h-full -z-10 pointer-events-none">
         <Grainient
@@ -36,7 +36,7 @@ export function HeroSection() {
       </div>
 
       {/* Inner grid */}
-      <div className="max-w-[1280px] mx-auto w-full px-16 max-md:px-6 grid grid-cols-1 md:grid-cols-2 gap-16 items-center relative z-10">
+      <div className="w-full max-w-[1200px] mx-auto px-16 max-md:px-6 grid grid-cols-1 md:grid-cols-2 gap-12 items-center relative z-10 py-16">
 
         {/* ── Left column ───────────────────────────────────── */}
         <div className="flex flex-col items-start gap-6">
@@ -53,7 +53,7 @@ export function HeroSection() {
 
           {/* Headline */}
           <h1
-            className="animate-fade-in-up py-6 md:py-8 text-[64px] font-bold leading-[1.08] text-[#1A1210] tracking-[-1.5px]"
+            className="animate-fade-in-up text-[64px] font-bold leading-[1.08] text-[#1A1210] tracking-[-1.5px]"
             style={{ animationDelay: '80ms' }}
           >
             Cold emails that actually get replies.
@@ -93,7 +93,7 @@ export function HeroSection() {
         </div>
 
         {/* ── Right column — Mac window mockup ──────────────── */}
-        <div className="mockup-float w-full max-w-[640px] ml-auto animate-fade-in-up" style={{ animationDelay: '400ms' }}>
+        <div className="mockup-float w-full animate-fade-in-up" style={{ animationDelay: '400ms' }}>
           <div className="rounded-2xl overflow-hidden shadow-[0_24px_80px_rgba(0,0,0,0.18)] border border-[#E5E5E5] bg-white">
             {/* Browser chrome bar */}
             <div className="h-10 bg-[#F5F5F5] border-b border-[#E5E5E5] flex items-center px-4 gap-3">

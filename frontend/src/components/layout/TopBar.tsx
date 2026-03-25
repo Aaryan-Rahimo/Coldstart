@@ -1,10 +1,16 @@
 'use client';
 
 import React from 'react';
-import { UploadCloud, FileText, Sparkles, Send } from 'lucide-react';
+import { UploadCloud, FileText, Sparkles, Send, Moon, Sun } from 'lucide-react';
 import { useEmailsStore } from '@/store/emails';
 
-export function TopBar() {
+export function TopBar({
+  isDarkMode,
+  onToggleTheme,
+}: {
+  isDarkMode: boolean;
+  onToggleTheme: () => void;
+}) {
   const { emails, selectedIds, isGenerating, mockGenerate } = useEmailsStore();
   const hasSelection = selectedIds.length > 0;
 
@@ -45,6 +51,15 @@ export function TopBar() {
         >
           <Send size={14} />
           <span className="hidden lg:inline">Send Selected</span>
+        </button>
+
+        <button
+          onClick={onToggleTheme}
+          className="h-[32px] w-[32px] flex items-center justify-center text-[12px] font-semibold border border-[var(--color-border-dark)] rounded-[var(--radius-md)] text-[var(--color-text-light-2)] hover:bg-[var(--color-surface-dark-2)] hover:text-[var(--color-text-light)] transition-colors"
+          title={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+          aria-label={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {isDarkMode ? <Sun size={14} /> : <Moon size={14} />}
         </button>
       </div>
     </header>

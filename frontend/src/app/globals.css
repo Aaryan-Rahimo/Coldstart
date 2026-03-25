@@ -168,7 +168,6 @@ html {
 
 *, *::before, *::after {
   box-sizing: border-box;
-  margin: 10px;
 }
 
 body {

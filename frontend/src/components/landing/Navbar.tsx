@@ -14,11 +14,10 @@ export function Navbar() {
 
   return (
     <header
-      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ease-in-out h-16 ${
-        scrolled
-          ? 'bg-[rgba(253,248,246,0.90)] backdrop-blur-[16px] border-b border-[#EBE0DC]'
-          : 'bg-transparent border-b border-transparent'
+      className={`sticky top-0 z-[999] h-16 flex items-center bg-[rgba(255,255,255,0.95)] backdrop-blur-[12px] transition-all duration-200 ease-in-out border-b border-[rgba(0,0,0,0.06)] ${
+        scrolled ? 'shadow-[0_2px_12px_rgba(0,0,0,0.06)]' : ''
       }`}
+      style={{ WebkitBackdropFilter: 'blur(12px)' }}
     >
       <div className="max-w-[1280px] mx-auto w-full px-16 max-md:px-6 h-full flex items-center justify-between">
         {/* Logo + nav links */}

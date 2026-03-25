@@ -23,7 +23,7 @@ interface EmailsState {
   closeDrawer: () => void;
   updateEmail: (id: string, newBody: string) => void;
   regenerateEmail: (id: string) => void;
-  sendEmail: (id: string) => void;
+  sendEmail: (id: string) => Promise<void>;
   setGenerating: (generating: boolean) => void;
   mockGenerate: () => void;
 }
@@ -90,9 +90,45 @@ export const useEmailsStore = create<EmailsState>((set, get) => ({
     }, 1500);
   },
 
-  sendEmail: (id) => {
+  sendEmail: async (id) => {
+    const target = get().emails.find((e) => e.id === id);
+    if (!target) {
+      return;
+    }
+
+    const statusRes = await fetch('/api/gmail/status', { method: 'GET' });
+    if (!statusRes.ok) {
+      alert('Please connect Gmail first');
+      return;
+    }
+
+    const statusJson = await statusRes.json();
+    if (!statusJson.connected) {
+      alert('Please connect Gmail first');
+      return;
+    }
+
+    const sendRes = await fetch('/api/gmail/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: target.contactEmail,
+        subject: `Quick intro - ${target.company}`,
+        body: target.fullBody,
+      }),
+    });
+
+    if (!sendRes.ok) {
+      const error = await sendRes.json().catch(() => ({}));
+      alert(error?.message ?? 'Failed to send email');
+      set((state) => ({
+        emails: state.emails.map((e) => (e.id === id ? { ...e, status: 'failed' } : e)),
+      }));
+      return;
+    }
+
     set((state) => ({
-      emails: state.emails.map(e => e.id === id ? { ...e, status: 'sent' } : e)
+      emails: state.emails.map((e) => (e.id === id ? { ...e, status: 'sent' } : e)),
     }));
     get().closeDrawer();
   },

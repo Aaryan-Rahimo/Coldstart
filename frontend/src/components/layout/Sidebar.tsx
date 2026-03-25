@@ -2,17 +2,25 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { Mail, Users, Settings, LogOut } from 'lucide-react';
+import { createClient } from '@/lib/supabase/client';
 
-export function Sidebar() {
+export function Sidebar({ userEmail }: { userEmail: string }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const supabase = createClient();
 
   const navItems = [
     { name: 'Emails', icon: Mail, href: '/app' },
     { name: 'Contacts', icon: Users, href: '/app/contacts' },
     { name: 'Settings', icon: Settings, href: '/app/settings' },
   ];
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    router.replace('/login');
+  };
 
   return (
     <aside className="fixed inset-y-0 left-0 w-[220px] bg-[var(--color-surface-dark)] border-r border-[var(--color-border-dark)] flex flex-col z-30 transition-transform md:translate-x-0 -translate-x-full font-body">
@@ -54,10 +62,10 @@ export function Sidebar() {
           U
         </div>
         <div className="ml-2 flex-1 min-w-0">
-          <p className="text-[12px] text-[var(--color-text-light-3)] truncate">user@example.com</p>
+          <p className="text-[12px] text-[var(--color-text-light-3)] truncate">{userEmail || 'user'}</p>
         </div>
         <button 
-          onClick={() => { window.location.href = '/login'; }}
+          onClick={handleLogout}
           className="text-[var(--color-text-light-3)] hover:text-[var(--color-brand-soft)] transition-colors ml-auto"
         >
           <LogOut size={14} />

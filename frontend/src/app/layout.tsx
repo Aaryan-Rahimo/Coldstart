@@ -1,16 +1,20 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
-import { DebugLayoutProbe } from "@/components/debug/DebugLayoutProbe";
 import "./globals.css";
-import { Geist } from "next/font/google";
 import { cn } from "@/lib/utils";
 
-const geist = Geist({subsets:['latin'],variable:'--font-sans'});
+const fontSans = localFont({
+  src: [
+    { path: "../../public/fonts/CreatoDisplay-Light.otf",   weight: "300" },
+    { path: "../../public/fonts/CreatoDisplay-Regular.otf", weight: "400" },
+    { path: "../../public/fonts/CreatoDisplay-Bold.otf",    weight: "700" },
+  ],
+  variable: "--font-sans",
+});
 
-// No dedicated mono font file exists — use PrimeformProDemo as mono fallback
 const fontMono = localFont({
   src: [
-    { path: "../../public/fonts/PrimeformProDemo-Regular.otf", weight: '400' },
+    { path: "../../public/fonts/PrimeformProDemo-Regular.otf", weight: "400" },
   ],
   variable: "--font-mono",
 });
@@ -28,11 +32,10 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={cn("antialiased", fontMono.variable, "font-sans", geist.variable)}
+      className={cn(fontSans.variable, fontMono.variable, "antialiased")}
       suppressHydrationWarning
     >
       <body className="min-h-screen flex flex-col" suppressHydrationWarning>
-        <DebugLayoutProbe />
         {children}
       </body>
     </html>
