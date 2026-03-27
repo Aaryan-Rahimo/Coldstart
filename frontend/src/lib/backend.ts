@@ -1,0 +1,5 @@
+const DEFAULT_BACKEND_URL = "http://127.0.0.1:8001";
+
+export function getBackendBaseUrl(): string {
+  return (process.env.NEXT_PUBLIC_BACKEND_URL ?? DEFAULT_BACKEND_URL).replace(/\/$/, "");
+}

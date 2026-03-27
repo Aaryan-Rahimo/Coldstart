@@ -52,6 +52,10 @@ class SendEmailRequest(BaseModel):
     email_id: str
 
 
+class UpdateEmailRequest(BaseModel):
+    edited_text: str = Field(..., min_length=1)
+
+
 class GithubSummaryRequest(BaseModel):
     github_url: HttpUrl
     project_descriptions: list[str] | None = None

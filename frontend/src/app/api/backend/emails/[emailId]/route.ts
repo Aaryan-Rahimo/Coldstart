@@ -3,7 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getBackendBaseUrl } from "@/lib/backend";
 import { createClient } from "@/lib/supabase/server";
 
-export async function POST(request: NextRequest) {
+type Params = { params: Promise<{ emailId: string }> };
+
+export async function PATCH(request: NextRequest, { params }: Params) {
+  const { emailId } = await params;
   const supabase = await createClient();
   const {
     data: { session },
@@ -13,18 +16,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { emailId } = await request.json();
-  if (!emailId) {
-    return NextResponse.json({ error: "Missing emailId" }, { status: 400 });
-  }
-
-  const response = await fetch(`${getBackendBaseUrl()}/send-email`, {
-    method: "POST",
+  const body = await request.json();
+  const response = await fetch(`${getBackendBaseUrl()}/emails/${emailId}`, {
+    method: "PATCH",
     headers: {
       Authorization: `Bearer ${session.access_token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ email_id: emailId }),
+    body: JSON.stringify(body),
   });
 
   const payload = await response.json().catch(() => ({}));

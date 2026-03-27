@@ -13,5 +13,17 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     redirect("/login");
   }
 
-  return <AppShell userEmail={user.email ?? ""}>{children}</AppShell>;
+  return (
+    <AppShell
+      userEmail={user.email ?? ""}
+      userName={
+        (typeof user.user_metadata?.display_name === "string" && user.user_metadata.display_name) ||
+        (typeof user.user_metadata?.full_name === "string" && user.user_metadata.full_name) ||
+        "Coldstart User"
+      }
+      avatarUrl={typeof user.user_metadata?.avatar_url === "string" ? user.user_metadata.avatar_url : null}
+    >
+      {children}
+    </AppShell>
+  );
 }

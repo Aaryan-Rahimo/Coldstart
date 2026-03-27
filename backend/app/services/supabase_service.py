@@ -75,6 +75,19 @@ class SupabaseService:
         data = response.data or []
         return data[0] if data else None
 
+    def update_email_edited_text(self, user_id: str, email_id: str, edited_text: str) -> dict[str, Any]:
+        response = (
+            self.client.table("emails")
+            .update({"edited_text": edited_text, "status": "draft"})
+            .eq("id", email_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        data = response.data or []
+        if not data:
+            raise ValueError("Failed to update email draft")
+        return data[0]
+
     def mark_email_sent(self, user_id: str, email_id: str, gmail_message_id: str) -> dict[str, Any]:
         response = (
             self.client.table("emails")

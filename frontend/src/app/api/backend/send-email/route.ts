@@ -13,18 +13,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { emailId } = await request.json();
-  if (!emailId) {
-    return NextResponse.json({ error: "Missing emailId" }, { status: 400 });
-  }
-
+  const body = await request.json();
   const response = await fetch(`${getBackendBaseUrl()}/send-email`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${session.access_token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ email_id: emailId }),
+    body: JSON.stringify(body),
   });
 
   const payload = await response.json().catch(() => ({}));

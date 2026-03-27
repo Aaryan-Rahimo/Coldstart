@@ -1,61 +1,55 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React from 'react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { Sidebar } from './Sidebar';
-import { TopBar } from './TopBar';
 
 export function AppShell({
   children,
   userEmail,
+  userName,
+  avatarUrl,
 }: {
   children: React.ReactNode;
   userEmail: string;
+  userName: string;
+  avatarUrl: string | null;
 }) {
-  const [isDarkMode, setIsDarkMode] = useState(false);
-
-  const themeVars = useMemo(
-    () =>
-      (isDarkMode
-        ? {
-            "--color-bg-dark": "#171312",
-            "--color-bg": "#171312",
-            "--color-surface-dark": "#1D1716",
-            "--color-surface-dark-2": "#2B2321",
-            "--color-border-dark": "#3A2E2A",
-            "--color-text-light": "#F5EFEF",
-            "--color-text-light-2": "#C7B4AE",
-            "--color-text-light-3": "#9D857E",
-            "--color-brand-core": "#D94048",
-            "--color-brand-deep": "#C13540",
-            "--color-brand-soft": "#E96B72",
-          }
-        : {
-            "--color-bg-dark": "#F7F3F1",
-            "--color-bg": "#F7F3F1",
-            "--color-surface-dark": "#FFFFFF",
-            "--color-surface-dark-2": "#F3ECE9",
-            "--color-border-dark": "#E7DDD8",
-            "--color-text-light": "#1A1210",
-            "--color-text-light-2": "#5E4D48",
-            "--color-text-light-3": "#8F7C76",
-            "--color-brand-core": "#D94048",
-            "--color-brand-deep": "#C13540",
-            "--color-brand-soft": "#D94048",
-          }) as React.CSSProperties,
-    [isDarkMode]
-  );
+  const pathname = usePathname();
+  const navItems = [
+    { name: 'Dashboard', href: '/app' },
+    { name: 'My Documents', href: '/app/documents' },
+    { name: 'Drafts', href: '/app/drafts' },
+    { name: 'Settings', href: '/app/settings' },
+  ];
 
   return (
-    <div className="h-[100svh] flex overflow-hidden font-body" style={themeVars}>
-      <Sidebar userEmail={userEmail} />
-      <div className="flex-1 flex flex-col md:pl-[220px] bg-[var(--color-bg-dark)] h-full">
-        <TopBar
-          isDarkMode={isDarkMode}
-          onToggleTheme={() => setIsDarkMode((prev) => !prev)}
-        />
-        <main className="flex-1 overflow-y-auto overflow-x-hidden pt-[56px] scroll-smooth">
-          {children}
-        </main>
+    <div
+      className="h-[100svh] flex overflow-hidden font-body"
+      style={{
+        backgroundColor: '#F5F3F0',
+      }}
+    >
+      <Sidebar userEmail={userEmail} userName={userName} avatarUrl={avatarUrl} />
+      <div className="flex-1 flex flex-col md:pl-[220px] h-full">
+        <div className="md:hidden sticky top-0 z-20 border-b border-[#E8DFD8] bg-white px-3 py-2">
+          <div className="flex items-center gap-2 overflow-x-auto whitespace-nowrap">
+            {navItems.map((item) => {
+              const active = item.href === '/app' ? pathname === '/app' : pathname.startsWith(item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`rounded-full px-3 py-1.5 text-[12px] ${active ? 'bg-[#FDECEC] text-[#E53935]' : 'bg-[#F6F1ED] text-[#725F57]'}`}
+                >
+                  {item.name}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+        <main className="flex-1 overflow-y-auto overflow-x-hidden scroll-smooth">{children}</main>
       </div>
     </div>
   );

@@ -14,8 +14,10 @@ interface EmailsState {
   emails: EmailDraft[];
   selectedIds: string[];
   isGenerating: boolean;
+  isLoading: boolean;
   drawerOpen: boolean;
   editingId: string | null;
+  loadEmails: () => Promise<void>;
   toggleSelection: (id: string) => void;
   selectAll: (allIds: string[]) => void;
   clearSelection: () => void;
@@ -28,42 +30,50 @@ interface EmailsState {
   mockGenerate: () => void;
 }
 
-const initialMockEmails: EmailDraft[] = [
-  {
-    id: '1',
-    company: 'Stripe',
-    contactEmail: 'jane.doe@stripe.com',
-    role: 'Eng Manager',
-    preview: "Hi Jane, I saw your team's recent work on Billing... ",
-    fullBody: "Hi Jane,\n\nI saw your team's recent work on Stripe Billing and was super impressed by the new subscription schedules feature.\n\nI'm a full-stack engineer with experience building scalable payment integrations. Would love to chat about potential open roles on your team.\n\nBest,\nAryan",
-    status: 'draft'
-  },
-  {
-    id: '2',
-    company: 'Vercel',
-    contactEmail: 'lee@vercel.com',
-    role: 'VP Product',
-    preview: "Lee, loved the Next.js 15 conf talk! I built a...",
-    fullBody: "Lee,\n\nloved the Next.js 15 conf talk! I built a mock application using the new compiler and saw a 40% reduction in build times.\n\nI'm currently looking for frontend roles and would be thrilled to contribute to the Next.js core or DevRel teams.\n\nCheers,\nAryan",
-    status: 'sent'
-  },
-  {
-    id: '3',
-    company: 'Linear',
-    contactEmail: 'recruiting@linear.app',
-    role: 'Recruiter',
-    preview: "Hello, Linear's keyboard-first design has heavily i...",
-    fullBody: "Hello,\n\nLinear's keyboard-first design has heavily influenced my own personal projects. I've built several open-source tools prioritizing speed and aesthetic.\n\nAre you looking for product engineers who obsess over micro-interactions?\n\nThanks,\nAryan",
-    status: 'draft'
-  }
-];
+type BackendEmailRow = {
+  id: string;
+  company_name: string;
+  contact_email: string;
+  role?: string | null;
+  generated_text: string;
+  edited_text?: string | null;
+  status: 'draft' | 'sent' | 'failed';
+};
+
+function toEmailDraft(row: BackendEmailRow): EmailDraft {
+  const fullBody = row.edited_text ?? row.generated_text;
+  return {
+    id: row.id,
+    company: row.company_name,
+    contactEmail: row.contact_email,
+    role: row.role ?? undefined,
+    preview: `${fullBody.slice(0, 60)}${fullBody.length > 60 ? '...' : ''}`,
+    fullBody,
+    status: row.status,
+  };
+}
 
 export const useEmailsStore = create<EmailsState>((set, get) => ({
-  emails: initialMockEmails, // start with some data for demo purposes
+  emails: [],
   selectedIds: [],
   isGenerating: false,
+  isLoading: false,
   drawerOpen: false,
   editingId: null,
+
+  loadEmails: async () => {
+    set({ isLoading: true });
+    try {
+      const res = await fetch('/api/backend/emails', { method: 'GET', cache: 'no-store' });
+      if (!res.ok) {
+        throw new Error('Failed to load emails');
+      }
+      const rows = (await res.json()) as BackendEmailRow[];
+      set({ emails: rows.map(toEmailDraft), isLoading: false });
+    } catch {
+      set({ isLoading: false });
+    }
+  },
 
   toggleSelection: (id) => set((state) => ({
     selectedIds: state.selectedIds.includes(id) 
@@ -77,17 +87,24 @@ export const useEmailsStore = create<EmailsState>((set, get) => ({
   openDrawer: (id) => set({ drawerOpen: true, editingId: id }),
   closeDrawer: () => set({ drawerOpen: false, editingId: null }),
 
-  updateEmail: (id, newBody) => set((state) => ({
-    emails: state.emails.map(e => e.id === id ? { ...e, fullBody: newBody, preview: newBody.substring(0, 50) + '...' } : e)
-  })),
+  updateEmail: (id, newBody) => {
+    set((state) => ({
+      emails: state.emails.map(e => e.id === id ? { ...e, fullBody: newBody, preview: `${newBody.slice(0, 60)}${newBody.length > 60 ? '...' : ''}` } : e)
+    }));
+
+    void fetch(`/api/backend/emails/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ edited_text: newBody }),
+    });
+  },
 
   regenerateEmail: (id) => {
-    // Mock regeneration delay
-    setTimeout(() => {
-      set((state) => ({
-        emails: state.emails.map(e => e.id === id ? { ...e, fullBody: 'Here is a newly generated email draft! It is much better now.\n\nBest,\nAryan', preview: 'Here is a newly generated email draft! It is much...' } : e)
-      }));
-    }, 1500);
+    const target = get().emails.find((e) => e.id === id);
+    if (!target) {
+      return;
+    }
+    alert(`Regenerate for ${target.company} is not wired yet. Use the backend /generate-emails flow to create new drafts.`);
   },
 
   sendEmail: async (id) => {
@@ -112,9 +129,7 @@ export const useEmailsStore = create<EmailsState>((set, get) => ({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        to: target.contactEmail,
-        subject: `Quick intro - ${target.company}`,
-        body: target.fullBody,
+        emailId: id,
       }),
     });
 

@@ -51,6 +51,35 @@ export function AuthCard({ mode, configError }: { mode: 'login' | 'signup'; conf
     }
   };
 
+  const handleGithubOAuth = async () => {
+    if (configError) {
+      setError(configError);
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'github',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+
+      if (error) {
+        console.error('Auth error:', error);
+        setError(error.message);
+        setIsLoading(false);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to initialize Supabase client');
+      setIsLoading(false);
+    }
+  };
+
   const labelClass = 'text-[12px] font-semibold text-[#1A1210] mb-1.5 block';
   const inputClass = 'w-full h-11 bg-[#FDF8F6] border border-[#EBE0DC] rounded-lg px-3 text-[14px] text-[#1A1210] outline-none transition-all focus:border-[#D94048] focus:ring-2 focus:ring-[rgba(193,53,64,0.14)]';
 
@@ -79,6 +108,15 @@ export function AuthCard({ mode, configError }: { mode: 'login' | 'signup'; conf
           <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
         </svg>
         Continue with Google
+      </button>
+
+      <button
+        type="button"
+        onClick={handleGithubOAuth}
+        disabled={isLoading || Boolean(configError)}
+        className="mt-3 w-full h-11 flex items-center justify-center gap-2 bg-white border border-[#EBE0DC] rounded-lg text-[14px] font-medium text-[#1A1210] hover:bg-[#FDF8F6] hover:border-[#D94048] transition-all disabled:opacity-50"
+      >
+        Continue with GitHub
       </button>
 
       {/* Divider */}

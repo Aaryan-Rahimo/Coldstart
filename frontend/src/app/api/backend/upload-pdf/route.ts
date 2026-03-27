@@ -1,26 +1,27 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import { getBackendBaseUrl } from "@/lib/backend";
 import { createClient } from "@/lib/supabase/server";
 
-export async function GET() {
+export async function POST(request: NextRequest) {
   const supabase = await createClient();
   const {
     data: { session },
   } = await supabase.auth.getSession();
 
   if (!session) {
-    return NextResponse.json({ connected: false }, { status: 401 });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const response = await fetch(`${getBackendBaseUrl()}/auth/status`, {
-    method: "GET",
+  const formData = await request.formData();
+  const response = await fetch(`${getBackendBaseUrl()}/upload-pdf`, {
+    method: "POST",
     headers: {
       Authorization: `Bearer ${session.access_token}`,
     },
-    cache: "no-store",
+    body: formData,
   });
 
-  const payload = await response.json().catch(() => ({ connected: false }));
+  const payload = await response.json().catch(() => ({}));
   return NextResponse.json(payload, { status: response.status });
 }

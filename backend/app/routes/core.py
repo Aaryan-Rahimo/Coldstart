@@ -11,6 +11,7 @@ from app.models.schemas import (
     GenerateEmailsResponse,
     GithubSummaryRequest,
     SendEmailRequest,
+    UpdateEmailRequest,
     UploadPdfResponse,
     UserContext,
 )
@@ -145,6 +146,31 @@ async def send_email(
                 "details": {"reason": str(exc)},
             },
         ) from exc
+
+
+@router.patch("/emails/{email_id}")
+async def update_email(
+    email_id: str,
+    payload: UpdateEmailRequest,
+    user: UserContext = Depends(get_current_user),
+) -> dict:
+    row = await asyncio.to_thread(supabase_service.get_user_email_by_id, user.user_id, email_id)
+    if not row:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "EMAIL_NOT_FOUND",
+                "message": "Email not found for current user",
+                "details": {},
+            },
+        )
+
+    return await asyncio.to_thread(
+        supabase_service.update_email_edited_text,
+        user.user_id,
+        email_id,
+        payload.edited_text,
+    )
 
 
 @router.post("/upload-pdf", response_model=UploadPdfResponse)
