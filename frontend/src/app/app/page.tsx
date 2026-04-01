@@ -2,24 +2,29 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CalendarDays, CheckCircle2, CircleDashed, Clock3, MailCheck, MailX, Sparkles } from "lucide-react";
+import Link from "next/link";
+import { CalendarDays, CheckCircle2, CircleDashed, Clock3, Sparkles } from "lucide-react";
 
-import { DashboardEmails } from "@/components/emails/DashboardEmails";
+import { OnboardingBanner } from "@/components/onboarding/OnboardingBanner";
 import { DraftRecord, DocumentRecord, formatLongDate, formatShortDate, getDisplayName, getGreeting } from "@/lib/coldstart";
 import { createClient } from "@/lib/supabase";
-import { useEmailsStore } from "@/store/emails";
+
+type AuthMe = {
+  has_github?: boolean;
+  has_google?: boolean;
+};
 
 export default function AppPage() {
   const supabase = createClient();
   const router = useRouter();
-  const loadEmails = useEmailsStore((state) => state.loadEmails);
 
   const [loading, setLoading] = useState(true);
   const [pendingDrafts, setPendingDrafts] = useState<DraftRecord[]>([]);
   const [allDrafts, setAllDrafts] = useState<DraftRecord[]>([]);
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [displayName, setDisplayName] = useState("there");
-  const [gmailConnected, setGmailConnected] = useState(false);
+  const [hasGithub, setHasGithub] = useState(false);
+  const [hasGoogle, setHasGoogle] = useState(false);
 
   useEffect(() => {
     async function loadDashboard() {
@@ -34,15 +39,24 @@ export default function AppPage() {
         return;
       }
 
-      await loadEmails();
-
       setDisplayName(getDisplayName((user.user_metadata?.display_name as string | undefined) ?? null, user.email));
 
-      const [draftsResult, docsResult, gmailConnectionResult] = await Promise.all([
+      const [draftsResult, docsResult] = await Promise.all([
         supabase.from("drafts").select("*").order("created_at", { ascending: false }),
         supabase.from("documents").select("*").order("uploaded_at", { ascending: false }),
-        supabase.from("gmail_connections").select("id").eq("user_id", user.id).limit(1),
       ]);
+
+      try {
+        const authRes = await fetch("/api/backend/auth/me", { cache: "no-store" });
+        if (authRes.ok) {
+          const authPayload = (await authRes.json()) as AuthMe;
+          setHasGithub(Boolean(authPayload.has_github));
+          setHasGoogle(Boolean(authPayload.has_google));
+        }
+      } catch {
+        setHasGithub(false);
+        setHasGoogle(false);
+      }
 
       const drafts = (draftsResult.data ?? []) as DraftRecord[];
       const docs = (docsResult.data ?? []) as DocumentRecord[];
@@ -50,12 +64,11 @@ export default function AppPage() {
       setAllDrafts(drafts);
       setPendingDrafts(drafts.filter((draft) => draft.status === "pending"));
       setDocuments(docs);
-      setGmailConnected(!gmailConnectionResult.error && (gmailConnectionResult.data?.length ?? 0) > 0);
       setLoading(false);
     }
 
     loadDashboard();
-  }, [loadEmails, supabase]);
+  }, [supabase]);
 
   const stats = useMemo(() => {
     return {
@@ -96,22 +109,41 @@ export default function AppPage() {
           </div>
         </header>
 
-        {!loading && !gmailConnected && (
-          <section className="rounded-2xl border border-[#E9DDD5] bg-white p-6 shadow-[0_8px_24px_rgba(54,35,26,0.05)]">
-            <h2 className="text-[18px] font-semibold text-[#1E1310]">Connect Gmail</h2>
-            <p className="mt-2 text-[14px] text-[#6F5A52]">
-              You can still use the dashboard, but sending emails requires a Gmail connection.
-            </p>
-            <button
-              onClick={() => {
-                window.location.href = "/api/google/auth";
-              }}
-              className="mt-4 rounded-lg bg-[#E53935] px-4 py-2 text-[13px] font-medium text-white"
-            >
-              Connect Gmail
-            </button>
-          </section>
-        )}
+        <OnboardingBanner />
+
+        <section className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="rounded-xl border border-[#E9DDD5] bg-white p-4 shadow-[0_6px_20px_rgba(54,35,26,0.04)]">
+            <div className="flex items-center justify-between">
+              <p className="text-[13px] text-[#866E65]">GitHub</p>
+              {hasGithub ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-[#EAF7EE] px-2.5 py-1 text-[11px] font-medium text-[#2E8B57]">
+                  <span className="h-2 w-2 rounded-full bg-[#2E8B57]" />
+                  Connected
+                </span>
+              ) : (
+                <Link href="/app/settings" className="rounded-md border border-[#E1D6CF] px-3 py-1.5 text-[12px] text-[#3D2C27]">
+                  Connect GitHub
+                </Link>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-[#E9DDD5] bg-white p-4 shadow-[0_6px_20px_rgba(54,35,26,0.04)]">
+            <div className="flex items-center justify-between">
+              <p className="text-[13px] text-[#866E65]">Gmail</p>
+              {hasGoogle ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-[#EAF7EE] px-2.5 py-1 text-[11px] font-medium text-[#2E8B57]">
+                  <span className="h-2 w-2 rounded-full bg-[#2E8B57]" />
+                  Connected
+                </span>
+              ) : (
+                <Link href="/api/google/auth" className="rounded-md border border-[#E1D6CF] px-3 py-1.5 text-[12px] text-[#3D2C27]">
+                  Connect Gmail
+                </Link>
+              )}
+            </div>
+          </div>
+        </section>
 
         <>
             <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -235,36 +267,6 @@ export default function AppPage() {
                     ))}
                   </div>
                 </div>
-              </div>
-            </section>
-
-            <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div className="rounded-xl border border-[#E9DDD5] bg-white p-4 text-[13px] text-[#6C5850]">
-                <MailCheck size={16} className="mb-2 text-[#2E8B57]" />
-                Accepted responses are manually tracked in Draft Review.
-              </div>
-              <div className="rounded-xl border border-[#E9DDD5] bg-white p-4 text-[13px] text-[#6C5850]">
-                <MailX size={16} className="mb-2 text-[#9F5D3D]" />
-                Mark rejected replies to improve your campaign analytics.
-              </div>
-              <div className="rounded-xl border border-[#E9DDD5] bg-white p-4 text-[13px] text-[#6C5850]">
-                <Clock3 size={16} className="mb-2 text-[#7A6860]" />
-                Review pending drafts daily for best outreach consistency.
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-[#E9DDD5] bg-white p-5 shadow-[0_8px_24px_rgba(54,35,26,0.05)]">
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <h2 className="text-[18px] font-semibold text-[#1E1310]">Email Workspace</h2>
-                <button
-                  onClick={() => void loadEmails()}
-                  className="rounded-md border border-[#E4D8D1] px-3 py-1.5 text-[12px] text-[#4F3B34]"
-                >
-                  Refresh
-                </button>
-              </div>
-              <div className="h-[560px] rounded-xl border border-[#EFE5DE] overflow-hidden">
-                <DashboardEmails />
               </div>
             </section>
         </>

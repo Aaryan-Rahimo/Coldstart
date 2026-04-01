@@ -131,13 +131,22 @@ class GmailService:
         }
 
     def store_user_tokens(self, user_id: str, token_payload: dict[str, Any]) -> None:
+        encrypted_access = self._encrypt(token_payload["access_token"])
+        encrypted_refresh = self._encrypt(token_payload.get("refresh_token"))
+
         supabase_service.upsert_gmail_tokens(
             user_id,
             {
-                "access_token": self._encrypt(token_payload["access_token"]),
-                "refresh_token": self._encrypt(token_payload.get("refresh_token")),
+                "access_token": encrypted_access,
+                "refresh_token": encrypted_refresh,
                 "token_expiry": token_payload["token_expiry"],
             },
+        )
+        supabase_service.upsert_user_integration(
+            user_id=user_id,
+            provider="google",
+            access_token=encrypted_access or token_payload["access_token"],
+            refresh_token=encrypted_refresh,
         )
 
     def _build_credentials(self, user_id: str) -> Credentials:

@@ -14,6 +14,19 @@ type GithubIdentity = {
   };
 };
 
+type AuthMe = {
+  has_github?: boolean;
+  has_google?: boolean;
+};
+
+const THEME_STORAGE_KEY = "coldstart-theme";
+
+function applyTheme(isDark: boolean) {
+  if (typeof window === "undefined") return;
+  document.documentElement.classList.toggle("dark", isDark);
+  document.body.classList.toggle("dark", isDark);
+}
+
 export default function SettingsPage() {
   const supabase = createClient();
 
@@ -33,13 +46,24 @@ export default function SettingsPage() {
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
 
   const [gmailConnected, setGmailConnected] = useState(false);
+  const [githubConnected, setGithubConnected] = useState(false);
   const [githubIdentity, setGithubIdentity] = useState<GithubIdentity | null>(null);
+  const [disconnectingGmail, setDisconnectingGmail] = useState(false);
+  const [disconnectingGithub, setDisconnectingGithub] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(false);
   const [monthlyUsage, setMonthlyUsage] = useState(0);
 
   const [deleteText, setDeleteText] = useState("");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
+    const dark = saved === "dark";
+    setIsDarkMode(dark);
+    applyTheme(dark);
+  }, []);
 
   useEffect(() => {
     async function loadData() {
@@ -64,13 +88,14 @@ export default function SettingsPage() {
       const github = identities.find((identity) => identity.identity_data?.user_name);
       setGithubIdentity(github ?? null);
 
-      const [gmailStatusResult, draftsResult] = await Promise.all([
-        fetch("/api/gmail/status", { method: "GET", cache: "no-store" }),
+      const [authMeResult, draftsResult] = await Promise.all([
+        fetch("/api/backend/auth/me", { method: "GET", cache: "no-store" }),
         supabase.from("drafts").select("id, created_at").eq("user_id", user.id),
       ]);
 
-      const gmailPayload = (await gmailStatusResult.json().catch(() => ({}))) as { connected?: boolean };
-      setGmailConnected(Boolean(gmailStatusResult.ok && gmailPayload.connected));
+      const authMePayload = (await authMeResult.json().catch(() => ({}))) as AuthMe;
+      setGmailConnected(Boolean(authMeResult.ok && authMePayload.has_google));
+      setGithubConnected(Boolean(authMeResult.ok && authMePayload.has_github));
 
       const month = monthKey();
       const usage = (draftsResult.data ?? []).filter((draft) => {
@@ -151,20 +176,45 @@ export default function SettingsPage() {
     });
   };
 
-  const disconnectGithub = async () => {
-    const authApi = supabase.auth as unknown as {
-      unlinkIdentity?: (identity: { provider: string; id: string }) => Promise<{ error: Error | null }>;
-    };
+  const toggleDarkMode = () => {
+    const next = !isDarkMode;
+    setIsDarkMode(next);
+    window.localStorage.setItem(THEME_STORAGE_KEY, next ? "dark" : "light");
+    applyTheme(next);
+  };
 
-    if (!githubIdentity?.id || !authApi.unlinkIdentity) {
-      setNotice("GitHub unlink is not available in this environment.");
-      return;
+  const disconnectGmail = async () => {
+    setDisconnectingGmail(true);
+    try {
+      const res = await fetch("/api/backend/auth/google", { method: "DELETE" });
+      const payload = (await res.json().catch(() => ({}))) as { error?: string; detail?: { message?: string } };
+      if (!res.ok) {
+        throw new Error(payload.detail?.message || payload.error || "Failed to disconnect Gmail");
+      }
+      setGmailConnected(false);
+      setNotice("Gmail disconnected.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Failed to disconnect Gmail");
+    } finally {
+      setDisconnectingGmail(false);
     }
+  };
 
-    const result = await authApi.unlinkIdentity({ provider: "github", id: githubIdentity.id });
-    setNotice(result.error ? result.error.message : "GitHub disconnected.");
-    if (!result.error) {
+  const disconnectGithub = async () => {
+    setDisconnectingGithub(true);
+    try {
+      const res = await fetch("/api/backend/github/disconnect", { method: "DELETE" });
+      const payload = (await res.json().catch(() => ({}))) as { error?: string; detail?: { message?: string } };
+      if (!res.ok) {
+        throw new Error(payload.detail?.message || payload.error || "Failed to disconnect GitHub");
+      }
+      setGithubConnected(false);
       setGithubIdentity(null);
+      setNotice("GitHub disconnected.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Failed to disconnect GitHub");
+    } finally {
+      setDisconnectingGithub(false);
     }
   };
 
@@ -198,7 +248,15 @@ export default function SettingsPage() {
     <div className="min-h-full bg-[#F5F3F0] px-5 py-6 md:px-8 md:py-8">
       <div className="mx-auto w-full max-w-6xl space-y-6">
         <header className="rounded-2xl border border-[#E9DDD5] bg-white p-5 shadow-[0_8px_24px_rgba(54,35,26,0.05)] md:p-6">
-          <h1 className="text-[22px] font-semibold text-[#1E1310]">Settings</h1>
+          <div className="flex items-center justify-between gap-3">
+            <h1 className="text-[22px] font-semibold text-[#1E1310]">Settings</h1>
+            <button
+              onClick={toggleDarkMode}
+              className="rounded-lg border border-[#E1D6CF] px-3 py-1.5 text-[12px] font-medium text-[#3D2C27]"
+            >
+              {isDarkMode ? "Disable Dark Mode" : "Enable Dark Mode"}
+            </button>
+          </div>
           <p className="mt-1 text-[14px] text-[#6F5A52]">Manage profile, integrations, and account security.</p>
           {notice && <p className="mt-2 text-[13px] text-[#A23A33]">{notice}</p>}
         </header>
@@ -288,13 +346,27 @@ export default function SettingsPage() {
           <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="rounded-xl border border-[#E7DDD6] bg-[#FFFEFD] p-4">
               <h3 className="text-[15px] font-semibold text-[#2A1C19]">Gmail Connection</h3>
-              <p className="mt-1 text-[13px] text-[#6D5951]">{gmailConnected ? "Connected" : "Disconnected"}</p>
-              <Link
-                href="/api/google/auth"
-                className="mt-3 inline-flex rounded-lg bg-[#E53935] px-3 py-2 text-[12px] font-medium text-white"
-              >
-                {gmailConnected ? "Reconnect Gmail" : "Connect Gmail"}
-              </Link>
+              <p className="mt-1 inline-flex items-center gap-2 text-[13px] text-[#6D5951]">
+                <span className={`h-2 w-2 rounded-full ${gmailConnected ? "bg-[#2E8B57]" : "bg-[#C3AAA0]"}`} />
+                {gmailConnected ? "Connected" : "Disconnected"}
+              </p>
+              <div className="mt-3 flex items-center gap-2">
+                <Link
+                  href="/api/google/auth"
+                  className="inline-flex rounded-lg bg-[#E53935] px-3 py-2 text-[12px] font-medium text-white"
+                >
+                  {gmailConnected ? "Reconnect Gmail" : "Connect Gmail"}
+                </Link>
+                {gmailConnected && (
+                  <button
+                    onClick={disconnectGmail}
+                    disabled={disconnectingGmail}
+                    className="inline-flex items-center gap-2 rounded-lg border border-[#F1C8C6] bg-[#FDF0EF] px-3 py-2 text-[12px] font-medium text-[#B42523] disabled:opacity-60"
+                  >
+                    {disconnectingGmail && <Loader2 size={13} className="animate-spin" />} Disconnect
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="rounded-xl border border-[#E7DDD6] bg-[#FFFEFD] p-4">
@@ -303,22 +375,28 @@ export default function SettingsPage() {
                 <h3 className="text-[15px] font-semibold text-[#2A1C19]">GitHub Connection</h3>
               </div>
 
-              {!githubIdentity ? (
+              <p className="mt-1 inline-flex items-center gap-2 text-[13px] text-[#6D5951]">
+                <span className={`h-2 w-2 rounded-full ${githubConnected ? "bg-[#2E8B57]" : "bg-[#C3AAA0]"}`} />
+                {githubConnected ? "Connected" : "Disconnected"}
+              </p>
+
+              {!githubConnected ? (
                 <button className="mt-3 rounded-lg border border-[#E1D6CF] px-3 py-2 text-[12px]" onClick={connectGithub}>
                   Connect GitHub
                 </button>
               ) : (
                 <div className="mt-3">
-                  <p className="text-[13px] text-[#2D211E]">Connected as @{githubIdentity.identity_data?.user_name ?? "github-user"}</p>
+                  <p className="text-[13px] text-[#2D211E]">Connected as @{githubIdentity?.identity_data?.user_name ?? "github-user"}</p>
                   {githubIdentity.identity_data?.avatar_url && (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={githubIdentity.identity_data.avatar_url} alt="GitHub avatar" className="mt-2 h-10 w-10 rounded-full" />
                   )}
                   <button
-                    className="mt-2 rounded-lg border border-[#F1C8C6] px-3 py-2 text-[12px] text-[#B42523]"
+                    className="mt-2 inline-flex items-center gap-2 rounded-lg border border-[#F1C8C6] bg-[#FDF0EF] px-3 py-2 text-[12px] font-medium text-[#B42523] disabled:opacity-60"
+                    disabled={disconnectingGithub}
                     onClick={disconnectGithub}
                   >
-                    Disconnect
+                    {disconnectingGithub && <Loader2 size={13} className="animate-spin" />} Disconnect
                   </button>
                 </div>
               )}

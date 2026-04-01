@@ -59,5 +59,42 @@ class GeminiService:
         )
         return self._generate_text(prompt)
 
+    def summarize_repos(self, repos: list[dict]) -> list[str]:
+        """Generate one-line summaries for a list of GitHub repos."""
+        if not repos:
+            return []
+
+        repo_descriptions = []
+        for i, repo in enumerate(repos):
+            topics = ", ".join(repo.get("topics", []))
+            repo_descriptions.append(
+                f"{i + 1}. {repo['name']}: {repo.get('description', 'No description')} "
+                f"(language: {repo.get('language', 'unknown')}, topics: {topics or 'none'})"
+            )
+
+        prompt = (
+            "For each GitHub repository below, write exactly ONE concise sentence summary. "
+            "Focus on what the project does and its tech stack. "
+            "Return exactly one line per repo, numbered to match the input.\n\n"
+            + "\n".join(repo_descriptions)
+        )
+
+        raw = self._generate_text(prompt)
+
+        # Parse numbered lines
+        lines = [line.strip() for line in raw.strip().split("\n") if line.strip()]
+        summaries = []
+        for line in lines:
+            # Remove numbering like "1. " or "1) "
+            cleaned = line.lstrip("0123456789.)")
+            summaries.append(cleaned.strip())
+
+        # Pad with fallbacks if Gemini returned fewer lines
+        while len(summaries) < len(repos):
+            idx = len(summaries)
+            summaries.append(repos[idx].get("description") or f"A {repos[idx].get('language', '')} project")
+
+        return summaries[:len(repos)]
+
 
 gemini_service = GeminiService()

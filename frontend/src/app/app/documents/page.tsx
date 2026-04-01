@@ -2,57 +2,44 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDropzone } from "react-dropzone";
-import { FileText, FileUp, FolderOpen, Loader2, Trash2 } from "lucide-react";
+import { FileText, FileUp, FolderOpen, GitFork, Loader2, Trash2, RefreshCw } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { DocumentRecord, formatShortDate, resolveDocumentStorageTarget } from "@/lib/coldstart";
-import { useEmailsStore } from "@/store/emails";
 
 type UploadPhase = "idle" | "uploading" | "done" | "error";
 
-async function extractPdfTextClient(file: File): Promise<string> {
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const workerSource = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (pdfjs as any).GlobalWorkerOptions.workerSrc = workerSource;
-
-  const bytes = await file.arrayBuffer();
-  const pdf = await pdfjs.getDocument({ data: bytes }).promise;
-
-  const parts: string[] = [];
-  for (let i = 1; i <= pdf.numPages; i += 1) {
-    const page = await pdf.getPage(i);
-    const text = await page.getTextContent();
-    const line = text.items
-      .map((item) => ("str" in item ? item.str : ""))
-      .join(" ")
-      .trim();
-    if (line) parts.push(line);
-  }
-
-  return parts.join("\n").slice(0, 50000);
-}
-
-type UploadPdfResponse = {
-  summary: string;
-  file_id: string;
+type UserFile = {
+  id: string;
+  user_id: string;
+  file_name: string;
+  file_type: string;
+  storage_path: string;
+  uploaded_at: string;
 };
 
-type GithubSummaryResponse = {
-  summary: string;
+type Project = {
+  id: string;
+  repo_name: string;
+  description: string | null;
+  summary: string | null;
+  languages: string[];
+  created_at: string;
 };
 
 export default function DocumentsPage() {
   const supabase = createClient();
-  const loadEmails = useEmailsStore((state) => state.loadEmails);
 
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [userFiles, setUserFiles] = useState<UserFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploadPhase, setUploadPhase] = useState<UploadPhase>("idle");
   const [uploadMessage, setUploadMessage] = useState("No files uploading.");
-  const [githubUrl, setGithubUrl] = useState("");
-  const [githubSummary, setGithubSummary] = useState("");
-  const [isSummarizingGithub, setIsSummarizingGithub] = useState(false);
-  const [isGeneratingEmails, setIsGeneratingEmails] = useState(false);
+
+  // Projects state
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [isSyncingProjects, setIsSyncingProjects] = useState(false);
+  const [projectsLoading, setProjectsLoading] = useState(true);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
 
   const loadDocuments = useCallback(async () => {
     setLoading(true);
@@ -61,104 +48,90 @@ export default function DocumentsPage() {
     setLoading(false);
   }, [supabase]);
 
+  const loadUserFiles = useCallback(async () => {
+    try {
+      const res = await fetch("/api/backend/files/list", { cache: "no-store" });
+      if (res.ok) {
+        const payload = (await res.json()) as { files: UserFile[] };
+        setUserFiles(payload.files || []);
+      }
+    } catch {
+      // silently fail
+    }
+  }, []);
+
+  const loadProjects = useCallback(async () => {
+    setProjectsLoading(true);
+    setProjectsError(null);
+    try {
+      const res = await fetch("/api/backend/github/projects", { cache: "no-store" });
+      let payload: { projects?: Project[]; error?: string; detail?: { message?: string } };
+      try {
+        payload = (await res.json()) as { projects?: Project[]; error?: string; detail?: { message?: string } };
+      } catch {
+        throw new Error("Server returned invalid response");
+      }
+
+      if (!res.ok || payload.error) {
+        throw new Error(payload.detail?.message || payload.error || "Failed to load projects");
+      }
+
+      setProjects(payload.projects || []);
+    } catch (error) {
+      setProjects([]);
+      setProjectsError(error instanceof Error ? error.message : "Failed to load projects");
+    }
+    setProjectsLoading(false);
+  }, []);
+
   useEffect(() => {
     loadDocuments();
-  }, [loadDocuments]);
+    loadUserFiles();
+    loadProjects();
+  }, [loadDocuments, loadUserFiles, loadProjects]);
 
   const handleUpload = useCallback(
     async (acceptedFiles: File[]) => {
-      if (acceptedFiles.length === 0) {
-        return;
-      }
-
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
-      const userId = session?.user?.id;
-      if (!userId) {
-        setUploadPhase("error");
-        setUploadMessage("You must be logged in to upload files.");
-        return;
-      }
+      if (acceptedFiles.length === 0) return;
 
       setUploadPhase("uploading");
 
       try {
         for (let index = 0; index < acceptedFiles.length; index += 1) {
           const file = acceptedFiles[index];
-          const extension = file.name.toLowerCase().endsWith(".pdf") ? "pdf" : "csv";
-          const storagePath = `${userId}/${Date.now()}-${file.name.replace(/\s+/g, "-")}`;
-          const bucket = extension === "pdf" ? "pdfs" : "csvs";
-          const contentType = extension === "pdf" ? "application/pdf" : "text/csv";
-          const fileType = extension === "pdf" ? "resume" : "csv";
-
           setUploadMessage(`Uploading ${file.name} (${index + 1}/${acceptedFiles.length})`);
 
-          const uploadResult = await supabase.storage.from(bucket).upload(storagePath, file, {
-            contentType,
-            upsert: true,
-          });
-          if (uploadResult.error) {
-            throw uploadResult.error;
-          }
+          const formData = new FormData();
+          formData.append("file", file);
 
-          const uploadedPath = uploadResult.data.path;
-
-          const filesUpsertResult = await supabase.from("files").upsert({
-            user_id: userId,
-            file_type: fileType,
-            file_url: uploadedPath,
+          const res = await fetch("/api/backend/files/upload", {
+            method: "POST",
+            body: formData,
           });
 
-          if (filesUpsertResult.error) {
-            throw filesUpsertResult.error;
+          let payload: { success?: boolean; error?: string; detail?: { error?: string; message?: string } };
+          try {
+            payload = (await res.json()) as { success?: boolean; error?: string; detail?: { error?: string; message?: string } };
+          } catch {
+            throw new Error("Server returned invalid response");
           }
 
-          let parsedContent: string | null = null;
-          if (extension === "pdf") {
-            const form = new FormData();
-            form.append("file", file);
-            const summaryRes = await fetch("/api/backend/upload-pdf", {
-              method: "POST",
-              body: form,
-            });
-
-            if (summaryRes.ok) {
-              const summaryPayload = (await summaryRes.json()) as UploadPdfResponse;
-              parsedContent = summaryPayload.summary;
-            } else {
-              parsedContent = await extractPdfTextClient(file);
-            }
-          }
-
-          if (extension === "csv") {
-            parsedContent = await file.text();
-          }
-
-          const insertResult = await supabase.from("documents").insert({
-            user_id: userId,
-            file_name: file.name,
-            file_type: extension,
-            uploaded_at: new Date().toISOString(),
-            storage_path: `${bucket}:${uploadedPath}`,
-            parsed_content: parsedContent,
-          });
-
-          if (insertResult.error) {
-            throw insertResult.error;
+          if (!res.ok || payload.success === false) {
+            const errorMsg = payload.error || payload.detail?.error || payload.detail?.message || "Upload failed";
+            throw new Error(errorMsg);
           }
         }
 
         setUploadPhase("done");
         setUploadMessage("Upload complete.");
+        await loadUserFiles();
         await loadDocuments();
       } catch (error) {
         setUploadPhase("error");
         setUploadMessage(error instanceof Error ? error.message : "Upload failed.");
       }
     },
-    [loadDocuments, supabase]
+    [loadDocuments, loadUserFiles]
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -173,103 +146,53 @@ export default function DocumentsPage() {
   const pdfDocuments = useMemo(() => documents.filter((doc) => doc.file_type === "pdf"), [documents]);
   const csvDocuments = useMemo(() => documents.filter((doc) => doc.file_type === "csv"), [documents]);
 
-  const latestResumeSummary = useMemo(() => {
-    return pdfDocuments.find((doc) => Boolean(doc.parsed_content))?.parsed_content ?? null;
-  }, [pdfDocuments]);
-
-  const latestCsvData = useMemo(() => {
-    return csvDocuments.find((doc) => Boolean(doc.parsed_content))?.parsed_content ?? null;
-  }, [csvDocuments]);
-
-  const handleGenerateGithubSummary = async () => {
-    if (!githubUrl.trim()) {
-      setUploadPhase("error");
-      setUploadMessage("Enter a GitHub URL before generating summary.");
-      return;
-    }
-
-    setIsSummarizingGithub(true);
-    try {
-      const res = await fetch("/api/backend/github-summary", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ github_url: githubUrl.trim() }),
-      });
-
-      if (!res.ok) {
-        throw new Error("Failed to generate GitHub summary");
-      }
-
-      const payload = (await res.json()) as GithubSummaryResponse;
-      setGithubSummary(payload.summary);
-    } catch (error) {
-      setUploadPhase("error");
-      setUploadMessage(error instanceof Error ? error.message : "Failed to generate GitHub summary.");
-    } finally {
-      setIsSummarizingGithub(false);
-    }
-  };
-
-  const handleGenerateEmails = async () => {
-    if (!latestResumeSummary) {
-      setUploadPhase("error");
-      setUploadMessage("Upload a PDF resume first so we can build resume_summary.");
-      return;
-    }
-
-    if (!latestCsvData) {
-      setUploadPhase("error");
-      setUploadMessage("Upload a CSV file first so we can generate outreach emails.");
-      return;
-    }
-
-    setIsGeneratingEmails(true);
-    try {
-      const res = await fetch("/api/backend/generate-emails", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          csv_data: latestCsvData,
-          resume_summary: latestResumeSummary,
-          github_summary: githubSummary || null,
-        }),
-      });
-
-      if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        throw new Error(payload?.detail?.message ?? "Failed to generate emails");
-      }
-
-      await loadEmails();
-      setUploadPhase("done");
-      setUploadMessage("Generated drafts successfully. Open the dashboard email table to review/send.");
-    } catch (error) {
-      setUploadPhase("error");
-      setUploadMessage(error instanceof Error ? error.message : "Failed to generate emails.");
-    } finally {
-      setIsGeneratingEmails(false);
-    }
-  };
-
   const previewFile = async (doc: DocumentRecord) => {
     const { bucket, path } = resolveDocumentStorageTarget(doc);
     const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 120);
-    if (error || !data?.signedUrl) {
-      return;
-    }
+    if (error || !data?.signedUrl) return;
     window.open(data.signedUrl, "_blank", "noopener,noreferrer");
   };
 
   const deleteFile = async (doc: DocumentRecord) => {
     const confirmed = window.confirm(`Delete ${doc.file_name}? This cannot be undone.`);
-    if (!confirmed) {
-      return;
-    }
+    if (!confirmed) return;
 
     const { bucket, path } = resolveDocumentStorageTarget(doc);
     await supabase.storage.from(bucket).remove([path]);
     await supabase.from("documents").delete().eq("id", doc.id);
     await loadDocuments();
+  };
+
+  const handleSyncProjects = async () => {
+    setIsSyncingProjects(true);
+    setProjectsError(null);
+    try {
+      const res = await fetch("/api/backend/github/sync", { method: "POST" });
+      let payload: { success?: boolean; error?: string; detail?: { message?: string } };
+      try {
+        payload = (await res.json()) as { success?: boolean; error?: string; detail?: { message?: string } };
+      } catch {
+        throw new Error("Server returned invalid response");
+      }
+
+      if (!res.ok) {
+        throw new Error(payload?.detail?.message || payload?.error || "Failed to sync projects");
+      }
+      if (payload.success === false) {
+        throw new Error(payload.error || payload.detail?.message || "Failed to sync projects");
+      }
+
+      await loadProjects();
+      setUploadPhase("done");
+      setUploadMessage("GitHub projects synced successfully.");
+    } catch (error) {
+      setUploadPhase("error");
+      const message = error instanceof Error ? error.message : "Failed to sync projects.";
+      setUploadMessage(message);
+      setProjectsError(message);
+    } finally {
+      setIsSyncingProjects(false);
+    }
   };
 
   return (
@@ -280,6 +203,7 @@ export default function DocumentsPage() {
           <p className="mt-1 text-[14px] text-[#6F5A52]">Upload CSV and PDF files. PDFs are parsed and stored for draft generation.</p>
         </header>
 
+        {/* File Upload Drop Zone */}
         <section
           {...getRootProps()}
           className={`cursor-pointer rounded-2xl border-2 border-dashed p-8 text-center transition ${
@@ -299,49 +223,114 @@ export default function DocumentsPage() {
                 {uploadMessage}
               </span>
             )}
-            {uploadPhase !== "uploading" && <span>{uploadMessage}</span>}
+            {uploadPhase === "error" && (
+              <span className="text-[#B42523] font-medium">{uploadMessage}</span>
+            )}
+            {uploadPhase === "done" && (
+              <span className="text-[#2E8B57] font-medium">{uploadMessage}</span>
+            )}
+            {uploadPhase === "idle" && <span>{uploadMessage}</span>}
           </div>
         </section>
 
+        {/* My Projects (GitHub Integration) */}
         <section className="rounded-2xl border border-[#E9DDD5] bg-white p-5 shadow-[0_8px_24px_rgba(54,35,26,0.05)]">
-          <h2 className="text-[17px] font-semibold text-[#1E1310]">Backend AI Actions</h2>
-          <p className="mt-1 text-[13px] text-[#6F5A52]">Use backend endpoints to summarize GitHub and generate drafts from your latest uploaded CSV + resume summary.</p>
-
-          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-[1fr_auto]">
-            <input
-              type="url"
-              value={githubUrl}
-              onChange={(event) => setGithubUrl(event.target.value)}
-              placeholder="https://github.com/your-handle"
-              className="h-10 rounded-lg border border-[#E2D7CF] px-3 text-[14px] outline-none focus:border-[#E53935]"
-            />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <GitFork size={18} className="text-[#1E1310]" />
+              <h2 className="text-[17px] font-semibold text-[#1E1310]">My Projects</h2>
+            </div>
             <button
-              onClick={handleGenerateGithubSummary}
-              disabled={isSummarizingGithub}
-              className="rounded-lg bg-[#E53935] px-4 py-2 text-[13px] font-medium text-white disabled:opacity-60"
+              onClick={handleSyncProjects}
+              disabled={isSyncingProjects}
+              className="inline-flex items-center gap-2 rounded-lg bg-[#1E1310] px-4 py-2 text-[13px] font-medium text-white disabled:opacity-60"
             >
-              {isSummarizingGithub ? "Summarizing..." : "Generate GitHub Summary"}
+              {isSyncingProjects ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <RefreshCw size={14} />
+              )}
+              {isSyncingProjects ? "Syncing..." : "Sync Projects"}
             </button>
           </div>
+          <p className="mt-1 text-[13px] text-[#6F5A52]">
+            Sync your GitHub repos. AI generates one-line summaries for each project.
+          </p>
 
-          {githubSummary && (
-            <p className="mt-3 rounded-lg border border-[#E9DDD5] bg-[#FCF8F6] p-3 text-[13px] text-[#473632]">
-              {githubSummary}
-            </p>
-          )}
-
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <button
-              onClick={handleGenerateEmails}
-              disabled={isGeneratingEmails}
-              className="rounded-lg bg-[#1E1310] px-4 py-2 text-[13px] font-medium text-white disabled:opacity-60"
-            >
-              {isGeneratingEmails ? "Generating..." : "Generate Emails From Latest CSV"}
-            </button>
-            <span className="text-[12px] text-[#7E675E]">Requires one uploaded PDF and one uploaded CSV.</span>
+          <div className="mt-4">
+            {projectsLoading ? (
+              <div className="space-y-3">
+                {Array.from({ length: 3 }).map((_, idx) => (
+                  <div key={idx} className="h-20 rounded-xl bg-gradient-to-r from-[#F4ECE7] via-[#FBF8F6] to-[#F4ECE7] bg-[length:200%_100%] animate-[shimmer_1.8s_infinite]" />
+                ))}
+              </div>
+            ) : projectsError ? (
+              <div className="rounded-xl border border-[#F1C8C6] bg-[#FDF3F3] p-6 text-center">
+                <p className="text-[14px] font-medium text-[#B42523]">{projectsError}</p>
+                <button
+                  onClick={loadProjects}
+                  className="mt-3 inline-flex items-center gap-2 rounded-lg border border-[#F1C8C6] px-3 py-1.5 text-[12px] font-medium text-[#B42523]"
+                >
+                  <RefreshCw size={13} /> Retry
+                </button>
+              </div>
+            ) : projects.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-[#E4D8D1] bg-[#FBF8F5] p-8 text-center">
+                <GitFork className="mx-auto text-[#B89F95]" size={24} />
+                <p className="mt-3 text-[14px] text-[#6F5A52]">No projects synced yet. Click &quot;Sync Projects&quot; to import from GitHub.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+                {projects.map((project) => (
+                  <div key={project.id} className="rounded-xl border border-[#EDE2DA] p-4 transition hover:shadow-md">
+                    <p className="truncate text-[14px] font-semibold text-[#1E1310]">{project.repo_name}</p>
+                    <p className="mt-1 text-[12px] text-[#6F5A52] line-clamp-2">
+                      {project.summary || project.description || "No description"}
+                    </p>
+                    {project.languages && project.languages.length > 0 && (
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {project.languages.slice(0, 5).map((lang) => (
+                          <span
+                            key={lang}
+                            className="rounded-full bg-[#FAF2ED] px-2.5 py-0.5 text-[11px] font-medium text-[#7A6158]"
+                          >
+                            {lang}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </section>
 
+        {/* Uploaded Files List */}
+        {userFiles.length > 0 && (
+          <section className="rounded-2xl border border-[#E9DDD5] bg-white p-5 shadow-[0_8px_24px_rgba(54,35,26,0.05)]">
+            <h2 className="mb-3 text-[17px] font-semibold text-[#1E1310]">Uploaded Files</h2>
+            <div className="space-y-2">
+              {userFiles.map((f) => (
+                <div key={f.id} className="flex items-center justify-between rounded-lg border border-[#EDE2DA] px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-[14px] font-medium text-[#2C1E1A]">{f.file_name}</p>
+                    <p className="text-[12px] text-[#7B655D]">
+                      {f.file_type.toUpperCase()} · {new Date(f.uploaded_at).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium uppercase ${
+                    f.file_type === "pdf" ? "bg-[#FCEBEB] text-[#B42523]" : "bg-[#EAF1FD] text-[#2F6FB7]"
+                  }`}>
+                    {f.file_type}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Legacy Document Files (from documents table) */}
         <section className="grid grid-cols-1 gap-5 lg:grid-cols-2">
           <DocumentColumn
             title="Resumes & PDFs"

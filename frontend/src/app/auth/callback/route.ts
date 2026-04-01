@@ -62,11 +62,12 @@ export async function GET(request: NextRequest) {
 
   const session = data.session
   const userId = session.user.id
+  const provider = session.user.app_metadata?.provider as string | undefined
   const providerToken = session.provider_token
   const providerRefreshToken = session.provider_refresh_token
 
-  // Store Gmail tokens if present
-  if (providerToken) {
+  // Only store Gmail tokens if logged in with Google AND token was granted
+  if (provider === 'google' && providerToken) {
     try {
       const encryptedAccess = encrypt(providerToken)
       const encryptedRefresh = providerRefreshToken ? encrypt(providerRefreshToken) : null

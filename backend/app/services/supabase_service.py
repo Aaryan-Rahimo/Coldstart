@@ -25,6 +25,62 @@ class SupabaseService:
             raise ValueError("User not found for token")
         return UserContext(user_id=str(user.id), email=user.email)
 
+    def upsert_user_integration(
+        self,
+        *,
+        user_id: str,
+        provider: str,
+        access_token: str,
+        refresh_token: str | None,
+    ) -> dict[str, Any]:
+        response = (
+            self.client.table("user_integrations")
+            .upsert(
+                {
+                    "user_id": user_id,
+                    "provider": provider,
+                    "access_token": access_token,
+                    "refresh_token": refresh_token,
+                },
+                on_conflict="user_id,provider",
+            )
+            .execute()
+        )
+        data = response.data or []
+        if not data:
+            raise ValueError(f"Failed to upsert {provider} integration")
+        return data[0]
+
+    def get_user_integration(self, user_id: str, provider: str) -> dict[str, Any] | None:
+        response = (
+            self.client.table("user_integrations")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("provider", provider)
+            .limit(1)
+            .execute()
+        )
+        data = response.data or []
+        return data[0] if data else None
+
+    def list_user_integrations(self, user_id: str) -> list[dict[str, Any]]:
+        response = (
+            self.client.table("user_integrations")
+            .select("provider")
+            .eq("user_id", user_id)
+            .execute()
+        )
+        return response.data or []
+
+    def delete_user_integration(self, user_id: str, provider: str) -> None:
+        (
+            self.client.table("user_integrations")
+            .delete()
+            .eq("user_id", user_id)
+            .eq("provider", provider)
+            .execute()
+        )
+
     def insert_generated_email(
         self,
         *,
@@ -148,6 +204,14 @@ class SupabaseService:
             .execute()
         )
 
+    def delete_gmail_tokens(self, user_id: str) -> None:
+        (
+            self.client.table("user_gmail_tokens")
+            .delete()
+            .eq("user_id", user_id)
+            .execute()
+        )
+
     def insert_pdf_summary(self, user_id: str, summary: str, filename: str) -> dict[str, Any]:
         response = (
             self.client.table("files")
@@ -184,6 +248,83 @@ class SupabaseService:
         if not data:
             raise ValueError("Failed to store GitHub summary")
         return data[0]
+
+    # ---------- File upload methods ----------
+
+    def check_duplicate_file(self, user_id: str, file_name: str) -> bool:
+        response = (
+            self.client.table("user_files")
+            .select("id")
+            .eq("user_id", user_id)
+            .eq("file_name", file_name)
+            .limit(1)
+            .execute()
+        )
+        return len(response.data or []) > 0
+
+    def upload_to_storage(self, bucket: str, path: str, file_bytes: bytes, content_type: str) -> Any:
+        return self.client.storage.from_(bucket).upload(
+            path,
+            file_bytes,
+            file_options={"content-type": content_type, "upsert": "false"},
+        )
+
+    def insert_user_file(self, user_id: str, file_name: str, file_type: str, storage_path: str) -> dict[str, Any]:
+        response = (
+            self.client.table("user_files")
+            .insert(
+                {
+                    "user_id": user_id,
+                    "file_name": file_name,
+                    "file_type": file_type,
+                    "storage_path": storage_path,
+                }
+            )
+            .execute()
+        )
+        data = response.data or []
+        if not data:
+            raise ValueError("Failed to insert file metadata")
+        return data[0]
+
+    def get_user_files(self, user_id: str) -> list[dict[str, Any]]:
+        response = (
+            self.client.table("user_files")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("uploaded_at", desc=True)
+            .execute()
+        )
+        return response.data or []
+
+    # ---------- GitHub project methods ----------
+
+    def get_github_token(self, user_id: str) -> str | None:
+        row = self.get_user_integration(user_id, "github")
+        if not row:
+            return None
+        token = row.get("access_token")
+        return token if token else None
+
+    def upsert_user_projects(self, user_id: str, projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not projects:
+            return []
+        response = (
+            self.client.table("user_projects")
+            .upsert(projects, on_conflict="user_id,repo_name")
+            .execute()
+        )
+        return response.data or []
+
+    def get_user_projects(self, user_id: str) -> list[dict[str, Any]]:
+        response = (
+            self.client.table("user_projects")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        return response.data or []
 
 
 supabase_service = SupabaseService()
