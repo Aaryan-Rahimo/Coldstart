@@ -39,9 +39,9 @@ export function Sidebar({
     .toUpperCase();
 
   return (
-    <aside className="fixed inset-y-0 left-0 w-[220px] bg-white border-r border-[#E8DFD8] flex-col z-30 font-body hidden md:flex">
+    <aside className="fixed inset-y-0 left-0 w-[220px] bg-white dark:bg-[#1C1717] border-r border-[#E8DFD8] dark:border-[#2E2626] flex-col z-30 font-body hidden md:flex">
       <div className="h-[72px] flex items-center px-5">
-        <Link href="/app" className="flex items-center space-x-2 text-[#211615]">
+        <Link href="/app" className="flex items-center space-x-2 text-[#211615] dark:text-[#F5EFEF]">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M13 2L3 14H12L11 22L21 10H12L13 2Z" fill="#E53935" />
           </svg>
@@ -59,18 +59,18 @@ export function Sidebar({
               className={`
                 flex items-center gap-3 h-10 px-3 rounded-xl text-[14px] font-medium transition-colors cursor-pointer select-none
                 ${isActive 
-                  ? 'bg-[#FDECEC] text-[#E53935]' 
-                  : 'text-[#725F57] hover:text-[#2D221F] hover:bg-[#F8F2EE]'}
+                  ? 'bg-[#FDECEC] text-[#E53935] dark:bg-[#322222] dark:text-[#FF8D8B]' 
+                  : 'text-[#725F57] hover:text-[#2D221F] hover:bg-[#F8F2EE] dark:text-[#B09898] dark:hover:text-[#F5EFEF] dark:hover:bg-[#252020]'}
               `}
             >
-              <item.icon size={16} className={`${isActive ? 'text-[#E53935]' : 'text-[#9B857C]'}`} />
+              <item.icon size={16} className={`${isActive ? 'text-[#E53935]' : 'text-[#9B857C] dark:text-[#6B5555]'}`} />
               {item.name}
             </Link>
           );
         })}
       </nav>
 
-      <div className="p-4 border-t border-[#EFE5DE] flex items-center mt-auto gap-2.5">
+      <div className="p-4 border-t border-[#EFE5DE] dark:border-[#2E2626] flex items-center mt-auto gap-2.5">
         {avatarUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={avatarUrl} alt={userName} className="w-9 h-9 rounded-full object-cover" />
@@ -80,8 +80,8 @@ export function Sidebar({
           </div>
         )}
         <div className="flex-1 min-w-0">
-          <p className="text-[12px] text-[#412E29] font-medium truncate">{userName}</p>
-          <p className="text-[11px] text-[#8D7770] truncate">{userEmail || 'user@email.com'}</p>
+          <p className="text-[12px] text-[#412E29] dark:text-[#F5EFEF] font-medium truncate">{userName}</p>
+          <p className="text-[11px] text-[#8D7770] dark:text-[#B09898] truncate">{userEmail || 'user@email.com'}</p>
         </div>
         <button 
           onClick={handleLogout}

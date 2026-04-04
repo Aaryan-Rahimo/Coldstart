@@ -326,5 +326,133 @@ class SupabaseService:
         )
         return response.data or []
 
+    # ---------- New methods for updated routes ----------
+
+    def check_file_exists(self, user_id: str, filename: str) -> bool:
+        try:
+            result = self.client.table("user_files") \
+                .select("id") \
+                .eq("user_id", user_id) \
+                .eq("file_name", filename) \
+                .execute()
+            return bool(result.data and len(result.data) > 0)
+        except Exception as e:
+            print(f"check_file_exists error: {e}")
+            return False
+
+    def upload_file_to_storage(self, bucket: str, path: str, content: bytes, content_type: str):
+        try:
+            result = self.client.storage.from_(bucket).upload(
+                path=path,
+                file=content,
+                file_options={"content-type": content_type, "upsert": "false"},
+            )
+            return result
+        except Exception as e:
+            print(f"upload_file_to_storage error: {e}")
+            raise
+
+    def list_user_files(self, user_id: str) -> list:
+        try:
+            result = self.client.table("user_files") \
+                .select("*") \
+                .eq("user_id", user_id) \
+                .order("uploaded_at", desc=True) \
+                .execute()
+            return result.data or []
+        except Exception as e:
+            print(f"list_user_files error: {e}")
+            return []
+
+    def get_user_file_by_id(self, file_id: str, user_id: str):
+        try:
+            result = self.client.table("user_files") \
+                .select("*") \
+                .eq("id", file_id) \
+                .eq("user_id", user_id) \
+                .single() \
+                .execute()
+            return result.data
+        except Exception:
+            return None
+
+    def delete_user_file(self, file_id: str, user_id: str):
+        self.client.table("user_files") \
+            .delete() \
+            .eq("id", file_id) \
+            .eq("user_id", user_id) \
+            .execute()
+
+    def delete_file_from_storage(self, bucket: str, path: str):
+        try:
+            self.client.storage.from_(bucket).remove([path])
+        except Exception as e:
+            print(f"delete_file_from_storage error: {e}")
+
+    def upsert_user_project(self, user_id: str, project: dict):
+        try:
+            # Ensure languages is always a list of strings
+            languages = project.get("languages", [])
+            if not isinstance(languages, list):
+                languages = [languages] if languages else []
+            languages = [str(l) for l in languages if l]
+
+            payload = {
+                "user_id": user_id,
+                "repo_name": project.get("repo_name", ""),
+                "description": (project.get("description") or "")[:2000],
+                "summary": (project.get("summary") or "")[:500],
+                "language": project.get("language") or "",
+                "languages": languages,
+                "stars": project.get("stars", 0),
+                "github_url": project.get("github_url", ""),
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
+            self.client.table("user_projects").upsert(
+                payload,
+                on_conflict="user_id,repo_name"
+            ).execute()
+        except Exception as e:
+            print(f"upsert_user_project error for {project.get('repo_name', '?')}: {e}")
+            raise
+
+    def list_user_projects(self, user_id: str) -> list:
+        try:
+            result = self.client.table("user_projects") \
+                .select("*") \
+                .eq("user_id", user_id) \
+                .order("updated_at", desc=True) \
+                .execute()
+            return result.data or []
+        except Exception as e:
+            print(f"list_user_projects error: {e}")
+            return []
+
+
+    def get_github_token_from_identity(self, user_id: str) -> str | None:
+        """
+        Fetches the GitHub OAuth token directly from Supabase auth identities.
+        Used as fallback when user_integrations doesn't have a real token.
+        """
+        try:
+            response = self.client.auth.admin.get_user_by_id(user_id)
+            user = getattr(response, 'user', None)
+            if not user:
+                return None
+
+            identities = getattr(user, 'identities', None) or []
+            for identity in identities:
+                provider = getattr(identity, 'provider', None)
+                if provider == 'github':
+                    identity_data = getattr(identity, 'identity_data', None) or {}
+                    token = identity_data.get('provider_token') or identity_data.get('access_token')
+                    if token:
+                        return token
+            return None
+        except Exception as e:
+            print(f"get_github_token_from_identity error: {e}")
+            return None
+
 
 supabase_service = SupabaseService()
+

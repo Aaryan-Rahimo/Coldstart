@@ -1,23 +1,30 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { getBackendBaseUrl } from '@/lib/backend'
 import { createClient } from '@/lib/supabase/server'
 
-export async function GET() {
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ file_id: string }> }
+) {
   const supabase = await createClient()
   const { data: { session } } = await supabase.auth.getSession()
 
   if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
 
+  const { file_id } = await params
+
   try {
-    const response = await fetch(`${getBackendBaseUrl()}/github/projects`, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      cache: 'no-store',
-    })
+    const response = await fetch(
+      `${getBackendBaseUrl()}/files/${file_id}`,
+      {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      }
+    )
 
     const text = await response.text()
     if (!text.trim()) {
@@ -28,7 +35,7 @@ export async function GET() {
       const payload = JSON.parse(text)
       return NextResponse.json(payload, { status: response.status })
     } catch {
-      return NextResponse.json({ success: false, error: `Invalid JSON: ${text.slice(0, 200)}` }, { status: 500 })
+      return NextResponse.json({ success: false, error: text.slice(0, 200) }, { status: 500 })
     }
   } catch (e) {
     return NextResponse.json(

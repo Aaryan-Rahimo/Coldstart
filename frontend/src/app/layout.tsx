@@ -35,6 +35,18 @@ export default function RootLayout({
       className={cn(fontSans.variable, fontMono.variable, "antialiased")}
       suppressHydrationWarning
     >
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+  (function() {
+    var theme = localStorage.getItem('theme');
+    if (theme === 'dark') document.documentElement.classList.add('dark');
+  })();
+`,
+          }}
+        />
+      </head>
       <body className="min-h-screen flex flex-col" suppressHydrationWarning>
         {children}
       </body>

@@ -1,108 +1,192 @@
 import asyncio
 import logging
-import time
+import os
+import traceback
 
-from fastapi import APIRouter, Depends, File, Header, UploadFile
+from fastapi import APIRouter, Depends, UploadFile, File
+from fastapi.responses import JSONResponse
 
 from app.dependencies import get_current_user
 from app.models.schemas import UserContext
 from app.services.supabase_service import supabase_service
 
-logger = logging.getLogger(__name__)
-
 router = APIRouter(prefix="/files", tags=["files"])
+logger = logging.getLogger("coldstart.files")
 
-ALLOWED_EXTENSIONS = {".csv", ".pdf"}
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
-
-
-def _get_extension(filename: str) -> str:
-    return "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-
-
-def _get_file_type(extension: str) -> str:
-    return "csv" if extension == ".csv" else "pdf"
+ALLOWED_EXTENSIONS = {
+    ".csv": "text/csv",
+    ".pdf": "application/pdf",
+}
+BUCKET = "user-files"
 
 
 @router.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
-    authorization: str | None = Header(default=None),
-) -> dict:
+    user: UserContext = Depends(get_current_user),
+):
+    logger.info(f"=== UPLOAD REQUEST === user={user.user_id} file={file.filename}")
+
     try:
-        if not authorization or not authorization.lower().startswith("bearer "):
-            return {"success": False, "error": "Missing or invalid Authorization header"}
+        # Validate filename
+        if not file or not file.filename:
+            logger.warning("No file provided")
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "error": "No file provided"}
+            )
 
-        token = authorization.split(" ", 1)[1].strip()
-        user = await asyncio.to_thread(supabase_service.validate_user_token, token)
-        user_id = user.user_id
+        filename = file.filename
+        ext = os.path.splitext(filename)[1].lower()
+        logger.info(f"File extension: {ext}")
 
-        filename = (file.filename or "").strip()
-        logger.info("[upload] user_id=%s filename=%s content_type=%s", user_id, filename, file.content_type)
-        print(f"[upload] user_id={user_id}")
-        print(f"[upload] file_name={filename}")
-
-        if not filename:
-            return {"success": False, "error": "Filename is required"}
-
-        ext = _get_extension(filename)
         if ext not in ALLOWED_EXTENSIONS:
-            logger.warning("[upload] rejected file type: %s (user=%s)", ext, user_id)
-            return {"success": False, "error": f"Only .csv and .pdf files are allowed, got {ext}"}
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "error": f"File type '{ext}' not allowed. Only .csv and .pdf files accepted."}
+            )
 
-        raw = await file.read()
-        if len(raw) == 0:
-            return {"success": False, "error": "File is empty"}
+        content_type = ALLOWED_EXTENSIONS[ext]
+        file_type = "csv" if ext == ".csv" else "pdf"
+        user_id = user.user_id
+        storage_path = f"{user_id}/{filename}"
 
-        if len(raw) > MAX_FILE_SIZE:
-            return {"success": False, "error": f"File exceeds 10 MB limit ({len(raw)} bytes)"}
+        # Read file bytes
+        try:
+            content = await file.read()
+            logger.info(f"Read {len(content)} bytes")
+        except Exception as e:
+            logger.error(f"Failed to read file: {traceback.format_exc()}")
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "error": f"Failed to read file content: {str(e)}"}
+            )
 
-        is_duplicate = await asyncio.to_thread(supabase_service.check_duplicate_file, user_id, filename)
-        if is_duplicate:
-            logger.warning("[upload] duplicate file: %s (user=%s)", filename, user_id)
-            return {"success": False, "error": "File already exists"}
+        if len(content) == 0:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "error": "File is empty"}
+            )
 
-        file_type = _get_file_type(ext)
-        storage_path = f"{user_id}/{int(time.time())}_{filename}"
-        content_type = "text/csv" if ext == ".csv" else "application/pdf"
+        # Check for duplicate
+        try:
+            exists = await asyncio.to_thread(
+                supabase_service.check_file_exists, user_id, filename
+            )
+            if exists:
+                logger.info(f"Duplicate file: {filename}")
+                return JSONResponse(
+                    status_code=409,
+                    content={"success": False, "error": f"'{filename}' already uploaded. Delete it first to replace."}
+                )
+        except Exception as e:
+            logger.warning(f"Duplicate check failed (continuing): {e}")
 
-        upload_result = await asyncio.to_thread(
-            supabase_service.upload_to_storage,
-            bucket="user-files",
-            path=storage_path,
-            file_bytes=raw,
-            content_type=content_type,
+        # Upload to Supabase Storage
+        logger.info(f"Uploading to bucket='{BUCKET}' path='{storage_path}'")
+        try:
+            await asyncio.to_thread(
+                supabase_service.upload_file_to_storage,
+                BUCKET, storage_path, content, content_type
+            )
+            logger.info("Storage upload successful")
+        except Exception as e:
+            err = str(e)
+            logger.error(f"Storage upload failed: {traceback.format_exc()}")
+            if "already exists" in err.lower():
+                return JSONResponse(
+                    status_code=409,
+                    content={"success": False, "error": "File already exists in storage."}
+                )
+            return JSONResponse(
+                status_code=500,
+                content={"success": False, "error": f"Storage upload failed: {err}"}
+            )
+
+        # Save metadata to user_files table
+        logger.info("Inserting into user_files table")
+        try:
+            await asyncio.to_thread(
+                supabase_service.insert_user_file,
+                user_id, filename, file_type, storage_path
+            )
+            logger.info("DB insert successful")
+        except Exception as e:
+            logger.error(f"DB insert failed: {traceback.format_exc()}")
+            return JSONResponse(
+                status_code=500,
+                content={"success": False, "error": f"File uploaded but metadata save failed: {str(e)}"}
+            )
+
+        logger.info(f"Upload complete: {filename}")
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "file_name": filename,
+                "file_type": file_type,
+                "storage_path": storage_path,
+                "bucket": BUCKET,
+            }
         )
-        logger.info("[upload] storage response: %s", upload_result)
-        print(f"[upload] upload_result={upload_result}")
 
-        db_row = await asyncio.to_thread(
-            supabase_service.insert_user_file,
-            user_id=user_id,
-            file_name=filename,
-            file_type=file_type,
-            storage_path=storage_path,
-        )
-        logger.info("[upload] metadata saved: user=%s path=%s", user_id, storage_path)
-        print(f"[upload] db_insert_result={db_row}")
-
-        return {"success": True, "path": storage_path, "file": db_row}
     except Exception as e:
-        print("ERROR:", str(e))
-        return {
-            "success": False,
-            "error": str(e),
-        }
+        logger.error(f"Unexpected upload error: {traceback.format_exc()}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": f"Unexpected server error: {str(e)}"}
+        )
 
 
 @router.get("/list")
-async def list_files(user: UserContext = Depends(get_current_user)) -> dict:
+async def list_files(user: UserContext = Depends(get_current_user)):
+    logger.info(f"List files — user={user.user_id}")
     try:
-        files = await asyncio.to_thread(supabase_service.get_user_files, user.user_id)
-        return {"success": True, "files": files}
+        files = await asyncio.to_thread(
+            supabase_service.list_user_files, user.user_id
+        )
+        logger.info(f"Returning {len(files)} files")
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "files": files}
+        )
     except Exception as e:
-        print("ERROR:", str(e))
-        return {
-            "success": False,
-            "error": str(e),
-        }
+        logger.error(f"List files error: {traceback.format_exc()}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": str(e)}
+        )
+
+
+@router.delete("/{file_id}")
+async def delete_file(file_id: str, user: UserContext = Depends(get_current_user)):
+    logger.info(f"Delete file — user={user.user_id} file_id={file_id}")
+    try:
+        record = await asyncio.to_thread(
+            supabase_service.get_user_file_by_id, file_id, user.user_id
+        )
+        if not record:
+            return JSONResponse(
+                status_code=404,
+                content={"success": False, "error": "File not found"}
+            )
+
+        try:
+            await asyncio.to_thread(
+                supabase_service.delete_file_from_storage,
+                BUCKET, record.get("storage_path", "")
+            )
+        except Exception as e:
+            logger.warning(f"Storage delete failed (continuing): {e}")
+
+        await asyncio.to_thread(
+            supabase_service.delete_user_file, file_id, user.user_id
+        )
+        return JSONResponse(status_code=200, content={"success": True})
+
+    except Exception as e:
+        logger.error(f"Delete error: {traceback.format_exc()}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": str(e)}
+        )

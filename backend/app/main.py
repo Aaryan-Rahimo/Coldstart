@@ -1,3 +1,5 @@
+import logging
+import os
 import traceback
 
 from fastapi import FastAPI, HTTPException, Request
@@ -7,13 +9,21 @@ from fastapi.responses import JSONResponse
 from app.config import get_settings
 from app.routes import auth_router, core_router, files_router, github_router
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s"
+)
+
 settings = get_settings()
 
 app = FastAPI(title="Coldstart Backend", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_url],
+    allow_origins=[
+        "http://localhost:3000",
+        os.getenv("FRONTEND_URL", "http://localhost:3000"),
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -36,7 +46,9 @@ async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse
 
 
 @app.exception_handler(Exception)
-async def unhandled_exception_handler(_: Request, exc: Exception) -> JSONResponse:
-    print("ERROR:", str(exc))
-    traceback.print_exc()
-    return JSONResponse(status_code=500, content={"success": False, "error": str(exc)})
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logging.error(f"Unhandled exception on {request.url}: {traceback.format_exc()}")
+    return JSONResponse(
+        status_code=500,
+        content={"success": False, "error": str(exc)}
+    )

@@ -1,7 +1,6 @@
 "use client";
 
 import { ChangeEventHandler, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { AlertTriangle, Globe, Loader2, Trash2 } from "lucide-react";
 import { monthKey, truncateUserId } from "@/lib/coldstart";
 import { createClient } from "@/lib/supabase/client";
@@ -13,19 +12,6 @@ type GithubIdentity = {
     avatar_url?: string;
   };
 };
-
-type AuthMe = {
-  has_github?: boolean;
-  has_google?: boolean;
-};
-
-const THEME_STORAGE_KEY = "coldstart-theme";
-
-function applyTheme(isDark: boolean) {
-  if (typeof window === "undefined") return;
-  document.documentElement.classList.toggle("dark", isDark);
-  document.body.classList.toggle("dark", isDark);
-}
 
 export default function SettingsPage() {
   const supabase = createClient();
@@ -45,12 +31,12 @@ export default function SettingsPage() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
 
-  const [gmailConnected, setGmailConnected] = useState(false);
-  const [githubConnected, setGithubConnected] = useState(false);
+  const [hasGithub, setHasGithub] = useState<boolean | null>(null);
+  const [hasGmail, setHasGmail] = useState<boolean | null>(null);
   const [githubIdentity, setGithubIdentity] = useState<GithubIdentity | null>(null);
   const [disconnectingGmail, setDisconnectingGmail] = useState(false);
   const [disconnectingGithub, setDisconnectingGithub] = useState(false);
-  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isDark, setIsDark] = useState(false);
   const [monthlyUsage, setMonthlyUsage] = useState(0);
 
   const [deleteText, setDeleteText] = useState("");
@@ -59,10 +45,9 @@ export default function SettingsPage() {
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
-    const dark = saved === "dark";
-    setIsDarkMode(dark);
-    applyTheme(dark);
+    const isDarkMode = document.documentElement.classList.contains("dark") ||
+      localStorage.getItem("theme") === "dark";
+    setIsDark(isDarkMode);
   }, []);
 
   useEffect(() => {
@@ -88,14 +73,9 @@ export default function SettingsPage() {
       const github = identities.find((identity) => identity.identity_data?.user_name);
       setGithubIdentity(github ?? null);
 
-      const [authMeResult, draftsResult] = await Promise.all([
-        fetch("/api/backend/auth/me", { method: "GET", cache: "no-store" }),
+      const [draftsResult] = await Promise.all([
         supabase.from("drafts").select("id, created_at").eq("user_id", user.id),
       ]);
-
-      const authMePayload = (await authMeResult.json().catch(() => ({}))) as AuthMe;
-      setGmailConnected(Boolean(authMeResult.ok && authMePayload.has_google));
-      setGithubConnected(Boolean(authMeResult.ok && authMePayload.has_github));
 
       const month = monthKey();
       const usage = (draftsResult.data ?? []).filter((draft) => {
@@ -109,6 +89,38 @@ export default function SettingsPage() {
 
     loadData();
   }, [supabase]);
+
+  useEffect(() => {
+    async function checkConnections() {
+      const supabase = createClient();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) return;
+
+      try {
+        const res = await fetch("/api/backend/auth/me", {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        const text = await res.text();
+        if (!text.trim()) return;
+        let data: { success?: boolean; has_github?: boolean; has_google?: boolean } = {};
+        try {
+          data = JSON.parse(text) as { success?: boolean; has_github?: boolean; has_google?: boolean };
+        } catch {
+          console.error("Failed to parse auth/me response:", text);
+          return;
+        }
+        if (data.success) {
+          setHasGithub(Boolean(data.has_github));
+          setHasGmail(Boolean(data.has_google));
+        }
+      } catch (e) {
+        console.error("Failed to check connections:", e);
+      }
+    }
+    checkConnections();
+  }, []);
 
   const canDelete = useMemo(() => deleteText === "DELETE", [deleteText]);
 
@@ -177,21 +189,30 @@ export default function SettingsPage() {
   };
 
   const toggleDarkMode = () => {
-    const next = !isDarkMode;
-    setIsDarkMode(next);
-    window.localStorage.setItem(THEME_STORAGE_KEY, next ? "dark" : "light");
-    applyTheme(next);
+    const newMode = !isDark;
+    setIsDark(newMode);
+    if (newMode) {
+      document.documentElement.classList.add("dark");
+      localStorage.setItem("theme", "dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+      localStorage.setItem("theme", "light");
+    }
   };
 
-  const disconnectGmail = async () => {
+  const handleDisconnectGmail = async () => {
     setDisconnectingGmail(true);
     try {
-      const res = await fetch("/api/backend/auth/google", { method: "DELETE" });
-      const payload = (await res.json().catch(() => ({}))) as { error?: string; detail?: { message?: string } };
-      if (!res.ok) {
-        throw new Error(payload.detail?.message || payload.error || "Failed to disconnect Gmail");
-      }
-      setGmailConnected(false);
+      const supabase = createClient();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) return;
+      await fetch("/api/backend/auth/google", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      setHasGmail(false);
       setNotice("Gmail disconnected.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Failed to disconnect Gmail");
@@ -200,15 +221,19 @@ export default function SettingsPage() {
     }
   };
 
-  const disconnectGithub = async () => {
+  const handleDisconnectGithub = async () => {
     setDisconnectingGithub(true);
     try {
-      const res = await fetch("/api/backend/github/disconnect", { method: "DELETE" });
-      const payload = (await res.json().catch(() => ({}))) as { error?: string; detail?: { message?: string } };
-      if (!res.ok) {
-        throw new Error(payload.detail?.message || payload.error || "Failed to disconnect GitHub");
-      }
-      setGithubConnected(false);
+      const supabase = createClient();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) return;
+      await fetch("/api/backend/auth/github", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      setHasGithub(false);
       setGithubIdentity(null);
       setNotice("GitHub disconnected.");
     } catch (error) {
@@ -236,8 +261,8 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="min-h-full bg-[#F5F3F0] px-5 py-8">
-        <div className="mx-auto max-w-6xl rounded-2xl border border-[#E8DDD6] bg-white p-10 text-center text-[#765F56]">
+      <div className="settings-page min-h-full bg-[#F5F3F0] px-5 py-8 dark:bg-[#120F0F]">
+        <div className="mx-auto max-w-6xl rounded-2xl border border-[#E8DDD6] bg-white p-10 text-center text-[#765F56] dark:border-[#2E2626] dark:bg-[#1C1717] dark:text-[#B09898]">
           Loading settings...
         </div>
       </div>
@@ -245,41 +270,59 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="min-h-full bg-[#F5F3F0] px-5 py-6 md:px-8 md:py-8">
+    <div className="settings-page min-h-full bg-[#F5F3F0] px-5 py-6 md:px-8 md:py-8 dark:bg-[#120F0F]">
       <div className="mx-auto w-full max-w-6xl space-y-6">
-        <header className="rounded-2xl border border-[#E9DDD5] bg-white p-5 shadow-[0_8px_24px_rgba(54,35,26,0.05)] md:p-6">
+        <header className={`rounded-2xl border p-5 md:p-6 ${isDark ? "bg-[#1C1717] border-[#2E2626]" : "bg-white border-[#E9DDD5]"}`}>
           <div className="flex items-center justify-between gap-3">
-            <h1 className="text-[22px] font-semibold text-[#1E1310]">Settings</h1>
+            <h1 className={`text-[22px] font-semibold ${isDark ? "text-[#F5EFEF]" : "text-[#1E1310]"}`}>Settings</h1>
             <button
               onClick={toggleDarkMode}
-              className="rounded-lg border border-[#E1D6CF] px-3 py-1.5 text-[12px] font-medium text-[#3D2C27]"
+              className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors duration-200 focus:outline-none ${
+                isDark ? "bg-[#D94048]" : "bg-[#EBE0DC]"
+              }`}
             >
-              {isDarkMode ? "Disable Dark Mode" : "Enable Dark Mode"}
+              <span className={`inline-flex h-5 w-5 items-center justify-center rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                isDark ? "translate-x-8" : "translate-x-1"
+              }`}>
+                {isDark ? (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-[#D94048]">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                  </svg>
+                ) : (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className="text-[#A08880]">
+                    <circle cx="12" cy="12" r="5"/>
+                    <line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+                    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+                    <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+                    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+                  </svg>
+                )}
+              </span>
             </button>
           </div>
-          <p className="mt-1 text-[14px] text-[#6F5A52]">Manage profile, integrations, and account security.</p>
+          <p className={`mt-1 text-[14px] ${isDark ? "text-[#B09898]" : "text-[#6F5A52]"}`}>Manage profile, integrations, and account security.</p>
           {notice && <p className="mt-2 text-[13px] text-[#A23A33]">{notice}</p>}
         </header>
 
         <section className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-          <div className="rounded-2xl border border-[#E9DDD5] bg-white p-5 md:p-6">
-            <h2 className="text-[18px] font-semibold text-[#1E1310]">Profile Settings</h2>
+          <div className={`rounded-2xl border p-5 md:p-6 ${isDark ? "bg-[#1C1717] border-[#2E2626]" : "bg-white border-[#E9DDD5]"}`}>
+            <h2 className={`text-[18px] font-semibold ${isDark ? "text-[#F5EFEF]" : "text-[#1E1310]"}`}>Profile Settings</h2>
             <div className="mt-4 space-y-3">
-              <label className="block text-[13px] text-[#6C5850]">
+              <label className="block text-[13px] text-[#6C5850] dark:text-[#B09898]">
                 Display Name
                 <input
                   value={displayName}
                   onChange={(event) => setDisplayName(event.target.value)}
-                  className="mt-1 w-full rounded-lg border border-[#E1D6CF] px-3 py-2 text-[14px]"
+                  className="mt-1 w-full rounded-lg border border-[#E1D6CF] px-3 py-2 text-[14px] dark:border-[#3A3030] dark:bg-[#171313] dark:text-[#F5EFEF]"
                 />
               </label>
 
-              <label className="block text-[13px] text-[#6C5850]">
+              <label className="block text-[13px] text-[#6C5850] dark:text-[#B09898]">
                 Email (read-only)
-                <input value={email} readOnly className="mt-1 w-full rounded-lg border border-[#E1D6CF] bg-[#F7F1EC] px-3 py-2 text-[14px]" />
+                <input value={email} readOnly className="mt-1 w-full rounded-lg border border-[#E1D6CF] bg-[#F7F1EC] px-3 py-2 text-[14px] dark:border-[#3A3030] dark:bg-[#171313] dark:text-[#F5EFEF]" />
               </label>
 
-              <label className="block text-[13px] text-[#6C5850]">
+              <label className="block text-[13px] text-[#6C5850] dark:text-[#B09898]">
                 Profile Picture
                 <input type="file" accept="image/*" onChange={onAvatarUpload} className="mt-1 w-full text-[13px]" />
               </label>
@@ -299,40 +342,40 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-[#E9DDD5] bg-white p-5 md:p-6">
-            <h2 className="text-[18px] font-semibold text-[#1E1310]">Password Change</h2>
+          <div className={`rounded-2xl border p-5 md:p-6 ${isDark ? "bg-[#1C1717] border-[#2E2626]" : "bg-white border-[#E9DDD5]"}`}>
+            <h2 className={`text-[18px] font-semibold ${isDark ? "text-[#F5EFEF]" : "text-[#1E1310]"}`}>Password Change</h2>
             <div className="mt-4 space-y-3">
-              <label className="block text-[13px] text-[#6C5850]">
+              <label className="block text-[13px] text-[#6C5850] dark:text-[#B09898]">
                 Current Password
                 <input
                   type="password"
                   value={currentPassword}
                   onChange={(event) => setCurrentPassword(event.target.value)}
-                  className="mt-1 w-full rounded-lg border border-[#E1D6CF] px-3 py-2 text-[14px]"
+                  className="mt-1 w-full rounded-lg border border-[#E1D6CF] px-3 py-2 text-[14px] dark:border-[#3A3030] dark:bg-[#171313] dark:text-[#F5EFEF]"
                 />
               </label>
-              <label className="block text-[13px] text-[#6C5850]">
+              <label className="block text-[13px] text-[#6C5850] dark:text-[#B09898]">
                 New Password
                 <input
                   type="password"
                   value={newPassword}
                   onChange={(event) => setNewPassword(event.target.value)}
-                  className="mt-1 w-full rounded-lg border border-[#E1D6CF] px-3 py-2 text-[14px]"
+                  className="mt-1 w-full rounded-lg border border-[#E1D6CF] px-3 py-2 text-[14px] dark:border-[#3A3030] dark:bg-[#171313] dark:text-[#F5EFEF]"
                 />
               </label>
-              <label className="block text-[13px] text-[#6C5850]">
+              <label className="block text-[13px] text-[#6C5850] dark:text-[#B09898]">
                 Confirm New Password
                 <input
                   type="password"
                   value={confirmNewPassword}
                   onChange={(event) => setConfirmNewPassword(event.target.value)}
-                  className="mt-1 w-full rounded-lg border border-[#E1D6CF] px-3 py-2 text-[14px]"
+                  className="mt-1 w-full rounded-lg border border-[#E1D6CF] px-3 py-2 text-[14px] dark:border-[#3A3030] dark:bg-[#171313] dark:text-[#F5EFEF]"
                 />
               </label>
               <button
                 onClick={savePassword}
                 disabled={savingPassword}
-                className="rounded-lg border border-[#E1D6CF] px-4 py-2 text-[13px] font-medium text-[#3D2C27]"
+                className="rounded-lg border border-[#E1D6CF] px-4 py-2 text-[13px] font-medium text-[#3D2C27] dark:border-[#3A3030] dark:text-[#F5EFEF]"
               >
                 {savingPassword ? "Saving..." : "Save Password"}
               </button>
@@ -340,74 +383,88 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        <section className="rounded-2xl border border-[#E9DDD5] bg-white p-5 md:p-6">
-          <h2 className="text-[18px] font-semibold text-[#1E1310]">Integrations</h2>
+        <section className={`rounded-2xl border p-5 md:p-6 ${isDark ? "bg-[#1C1717] border-[#2E2626]" : "bg-white border-[#E9DDD5]"}`}>
+          <h2 className={`text-[18px] font-semibold ${isDark ? "text-[#F5EFEF]" : "text-[#1E1310]"}`}>Integrations</h2>
 
           <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div className="rounded-xl border border-[#E7DDD6] bg-[#FFFEFD] p-4">
-              <h3 className="text-[15px] font-semibold text-[#2A1C19]">Gmail Connection</h3>
-              <p className="mt-1 inline-flex items-center gap-2 text-[13px] text-[#6D5951]">
-                <span className={`h-2 w-2 rounded-full ${gmailConnected ? "bg-[#2E8B57]" : "bg-[#C3AAA0]"}`} />
-                {gmailConnected ? "Connected" : "Disconnected"}
-              </p>
-              <div className="mt-3 flex items-center gap-2">
-                <Link
-                  href="/api/google/auth"
-                  className="inline-flex rounded-lg bg-[#E53935] px-3 py-2 text-[12px] font-medium text-white"
+            <div className={`flex items-center justify-between p-5 rounded-xl border-2 ${
+              hasGmail ? "border-green-200 bg-green-50 dark:border-green-900/60 dark:bg-green-950/25" : "border-[#E7DDD6] bg-[#FFFEFD] dark:border-[#2E2626] dark:bg-[#171313]"
+            }`}>
+              <div className="flex items-center gap-3">
+                <svg width="20" height="20" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                  <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                  <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                  <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                </svg>
+                <div>
+                  <p className="font-semibold text-[15px] text-[#1A1210] dark:text-[#F5EFEF]">Gmail</p>
+                  <p className={`text-[13px] font-medium ${hasGmail ? "text-green-600" : "text-[#A08880]"}`}>
+                    {hasGmail ? "✓ Connected" : "Not connected"}
+                  </p>
+                </div>
+              </div>
+              {hasGmail ? (
+                <button
+                  onClick={handleDisconnectGmail}
+                  disabled={disconnectingGmail}
+                  className="text-[13px] font-semibold bg-[#D94048] text-white rounded-full px-4 py-1.5 hover:bg-[#C13540] transition-colors disabled:opacity-60"
                 >
-                  {gmailConnected ? "Reconnect Gmail" : "Connect Gmail"}
-                </Link>
-                {gmailConnected && (
-                  <button
-                    onClick={disconnectGmail}
-                    disabled={disconnectingGmail}
-                    className="inline-flex items-center gap-2 rounded-lg border border-[#F1C8C6] bg-[#FDF0EF] px-3 py-2 text-[12px] font-medium text-[#B42523] disabled:opacity-60"
-                  >
-                    {disconnectingGmail && <Loader2 size={13} className="animate-spin" />} Disconnect
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-[#E7DDD6] bg-[#FFFEFD] p-4">
-              <div className="flex items-center gap-2">
-                <Globe size={16} />
-                <h3 className="text-[15px] font-semibold text-[#2A1C19]">GitHub Connection</h3>
-              </div>
-
-              <p className="mt-1 inline-flex items-center gap-2 text-[13px] text-[#6D5951]">
-                <span className={`h-2 w-2 rounded-full ${githubConnected ? "bg-[#2E8B57]" : "bg-[#C3AAA0]"}`} />
-                {githubConnected ? "Connected" : "Disconnected"}
-              </p>
-
-              {!githubConnected ? (
-                <button className="mt-3 rounded-lg border border-[#E1D6CF] px-3 py-2 text-[12px]" onClick={connectGithub}>
-                  Connect GitHub
+                  {disconnectingGmail ? "Disconnecting..." : "Disconnect"}
                 </button>
               ) : (
-                <div className="mt-3">
-                  <p className="text-[13px] text-[#2D211E]">Connected as @{githubIdentity?.identity_data?.user_name ?? "github-user"}</p>
-                  {githubIdentity.identity_data?.avatar_url && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={githubIdentity.identity_data.avatar_url} alt="GitHub avatar" className="mt-2 h-10 w-10 rounded-full" />
-                  )}
-                  <button
-                    className="mt-2 inline-flex items-center gap-2 rounded-lg border border-[#F1C8C6] bg-[#FDF0EF] px-3 py-2 text-[12px] font-medium text-[#B42523] disabled:opacity-60"
-                    disabled={disconnectingGithub}
-                    onClick={disconnectGithub}
-                  >
-                    {disconnectingGithub && <Loader2 size={13} className="animate-spin" />} Disconnect
-                  </button>
+                <button
+                  onClick={() => supabase.auth.signInWithOAuth({
+                    provider: "google",
+                    options: {
+                      redirectTo: `${window.location.origin}/auth/callback`,
+                      scopes: "https://www.googleapis.com/auth/gmail.send",
+                      queryParams: { access_type: "offline", prompt: "consent" },
+                    },
+                  })}
+                  className="text-[13px] font-semibold bg-[#D94048] text-white rounded-full px-4 py-1.5 hover:bg-[#C13540] transition-colors"
+                >
+                  Connect
+                </button>
+              )}
+            </div>
+
+            <div className={`flex items-center justify-between p-5 rounded-xl border-2 ${
+              hasGithub ? "border-green-200 bg-green-50 dark:border-green-900/60 dark:bg-green-950/25" : "border-[#E7DDD6] bg-[#FFFEFD] dark:border-[#2E2626] dark:bg-[#171313]"
+            }`}>
+              <div className="flex items-center gap-3">
+                <Globe size={16} />
+                <div>
+                  <p className="font-semibold text-[15px] text-[#1A1210] dark:text-[#F5EFEF]">GitHub</p>
+                  <p className={`text-[13px] font-medium ${hasGithub ? "text-green-600" : "text-[#A08880]"}`}>
+                    {hasGithub ? "✓ Connected" : "Not connected"}
+                  </p>
                 </div>
+              </div>
+              {hasGithub ? (
+                <button
+                  onClick={handleDisconnectGithub}
+                  disabled={disconnectingGithub}
+                  className="text-[13px] font-semibold bg-[#D94048] text-white rounded-full px-4 py-1.5 hover:bg-[#C13540] transition-colors disabled:opacity-60"
+                >
+                  {disconnectingGithub ? "Disconnecting..." : "Disconnect"}
+                </button>
+              ) : (
+                <button
+                  onClick={connectGithub}
+                  className="text-[13px] font-semibold bg-[#1A1210] text-white rounded-full px-4 py-1.5 hover:opacity-80 transition-opacity"
+                >
+                  Connect
+                </button>
               )}
             </div>
           </div>
         </section>
 
         <section className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-          <div className="rounded-2xl border border-[#E9DDD5] bg-white p-5 md:p-6">
-            <h2 className="text-[18px] font-semibold text-[#1E1310]">Danger Zone</h2>
-            <p className="mt-1 text-[13px] text-[#6D5951]">Delete your account and all associated data permanently.</p>
+          <div className={`rounded-2xl border p-5 md:p-6 ${isDark ? "bg-[#1C1717] border-[#2E2626]" : "bg-white border-[#E9DDD5]"}`}>
+            <h2 className={`text-[18px] font-semibold ${isDark ? "text-[#F5EFEF]" : "text-[#1E1310]"}`}>Danger Zone</h2>
+            <p className="mt-1 text-[13px] text-[#6D5951] dark:text-[#B09898]">Delete your account and all associated data permanently.</p>
             <button
               className="mt-4 inline-flex items-center gap-2 rounded-lg border border-[#E53935] px-4 py-2 text-[13px] font-medium text-[#C62A27]"
               onClick={() => setShowDeleteModal(true)}
@@ -416,9 +473,9 @@ export default function SettingsPage() {
             </button>
           </div>
 
-          <div className="rounded-2xl border border-[#E9DDD5] bg-white p-5 md:p-6">
-            <h2 className="text-[18px] font-semibold text-[#1E1310]">Account Info</h2>
-            <div className="mt-3 space-y-2 text-[13px] text-[#5F4B44]">
+          <div className={`rounded-2xl border p-5 md:p-6 ${isDark ? "bg-[#1C1717] border-[#2E2626]" : "bg-white border-[#E9DDD5]"}`}>
+            <h2 className={`text-[18px] font-semibold ${isDark ? "text-[#F5EFEF]" : "text-[#1E1310]"}`}>Account Info</h2>
+            <div className="mt-3 space-y-2 text-[13px] text-[#5F4B44] dark:text-[#B09898]">
               <p>Account created: {createdAt ? new Date(createdAt).toLocaleDateString() : "-"}</p>
               <p>User ID: {truncateUserId(userId)}</p>
               <p>
@@ -432,22 +489,22 @@ export default function SettingsPage() {
 
       {showDeleteModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-5">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 dark:bg-[#1C1717]">
             <div className="flex items-center gap-2 text-[#B42523]">
               <AlertTriangle size={18} />
               <h3 className="text-[17px] font-semibold">Confirm account deletion</h3>
             </div>
-            <p className="mt-2 text-[13px] text-[#6B5850]">Type DELETE to confirm. This removes account data permanently.</p>
+            <p className="mt-2 text-[13px] text-[#6B5850] dark:text-[#B09898]">Type DELETE to confirm. This removes account data permanently.</p>
             <input
               value={deleteText}
               onChange={(event) => setDeleteText(event.target.value)}
-              className="mt-3 w-full rounded-lg border border-[#E1D6CF] px-3 py-2 text-[14px]"
+              className="mt-3 w-full rounded-lg border border-[#E1D6CF] px-3 py-2 text-[14px] dark:border-[#3A3030] dark:bg-[#171313] dark:text-[#F5EFEF]"
               placeholder="Type DELETE"
             />
 
             <div className="mt-4 flex items-center justify-end gap-2">
               <button
-                className="rounded-lg border border-[#E1D6CF] px-3 py-2 text-[12px]"
+                className="rounded-lg border border-[#E1D6CF] px-3 py-2 text-[12px] dark:border-[#3A3030] dark:text-[#F5EFEF]"
                 onClick={() => {
                   setShowDeleteModal(false);
                   setDeleteText("");

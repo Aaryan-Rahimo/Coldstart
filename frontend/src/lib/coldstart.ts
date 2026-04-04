@@ -1,14 +1,16 @@
 export type DraftStatus = "pending" | "sent" | "accepted" | "rejected";
 
-export interface DocumentRecord {
+export type Document = {
   id: string;
   user_id: string;
   file_name: string;
-  file_type: "pdf" | "csv";
+  file_type: string;
   storage_path: string;
-  parsed_content: string | null;
+  parsed_content?: string | null;
   uploaded_at: string;
-}
+};
+
+export type DocumentRecord = Document;
 
 export interface DraftRecord {
   id: string;
@@ -27,27 +29,19 @@ export interface CsvPreviewRow {
   selected: boolean;
 }
 
-export function resolveDocumentStorageTarget(doc: Pick<DocumentRecord, "file_type" | "storage_path">): {
-  bucket: string;
-  path: string;
-} {
-  const [maybeBucket, ...rest] = doc.storage_path.split(":");
-  if (rest.length > 0) {
-    return {
-      bucket: maybeBucket,
-      path: rest.join(":"),
-    };
+export function resolveDocumentStorageTarget(doc: {
+  storage_path?: string | null
+  file_type?: string
+  file_name?: string
+  user_id?: string
+}): { bucket: string; path: string } {
+  const BUCKET = "user-files";
+
+  if (doc.storage_path) {
+    return { bucket: BUCKET, path: doc.storage_path };
   }
 
-  if (doc.file_type === "csv") {
-    return { bucket: "csvs", path: doc.storage_path };
-  }
-
-  if (doc.file_type === "pdf") {
-    return { bucket: "pdfs", path: doc.storage_path };
-  }
-
-  return { bucket: "documents", path: doc.storage_path };
+  return { bucket: BUCKET, path: doc.file_name ?? "" };
 }
 
 export function getGreeting(now = new Date()): string {
